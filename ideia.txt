@@ -19,36 +19,32 @@ sistema:
         3. usar token_sort_ratio metric pra não ter diferença em titulos com palavras em ordem diferente
         4. score > 90 = ok, score [70, 90] = ver a similaridade no nome da desenvolvedora, score < 70 = discarta
     - preparar os bancos
-        - "Multi-Decade Video Game Review Dataset" 
-            - platform, rating (public rating), Likes Received, Time Since Review
-        - "How Long to Beat Video Game Playtime Dataset"
-            - time to beat
-        - Steam Games Dataset
-            - release year, description, userscore, metascore
-        - Metacritic's Best Games and Reviews
-            - metascore, userscore, genres
-        - RAWG Games Dataset
-            - rating, tags
-        - IGDB (Internet Game Database) API
-            - cover art, resumo, ano de lançamento
-
+        - os jogos precisam ser atuais então os datasets não servem. precisa de API
+            - Gamespot API (fazer uma max caso a pessoa tenha feito 2 reviews do mesmo jogo)
+                - user, game, rating, published date
+            - RAWG games API, Gamespot API, HLTB Scrapper
+                - titulo, plataforma, developer, publisher, genres, tags, dates, metacritic
+                - titulo, description, genres, themes, release date
+                - game_name, game_type, review_score, profile_platforms, release_world, main_story, main_extra, completionist, 
+            - IGDB (Internet Game Database) API
+                - cover art, resumo, ano de lançamento
+        
         - genero e sub genero -> multi hot encoded
         - nota critico, nota publico, time to beat -> normalizar de 0 a 1
         - descrição do jogo -> embedding gerado por word2vec
 
-        - tabela user x game com os valores sendo o rating precisa ser criada a partir dos datasets Video Game Reviews and Ratings Dataset e Multi-Decade Video Game Review Dataset
+        - tabela user x game com os valores sendo o rating precisa ser criada a partir do dataset gerado pela API do gamespot
         - cada game (N linhas) vai ter as seguintes informações (M colunas)
             - titulo, 128 (usando item2vec)
             - descrição do jogo/palavras chave, 128 (embedding gerado por word2vec)
             - genero, 20 (usando multi hot encoding)
             - ano de lançamento, 1 (min max scaling?)
-            - online/offline, 1 (1 se for online)
             - plataforma, 10 (usando one hot encoding)
             - time to beat, 3 (main, extra, 100%) (normalizar usando tanh np.tanh(df['time_to_beat'] / 50.0))
             - nota dos criticos, 1 (usando min max scaling de 0-1)
             - nota do usuário, 1 (fazendo uma media e depois usando min max scaling de 0-1)
             - Collaborative Embedding, 32 (usando svd, Surprise (Python Library) ou sklearn, pra embedar baseado nas reviews dos usuarios, aka Video Game Reviews and Ratings Dataset)
-        - depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco Multi-Decade Video Game Review Dataset
+        - depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
         - o banco vai ter a seguinte estrutura
             - observations: array 2D (NxM), onde cada linha representa o estado de um usuario. 
                 - embedding do usuario 0 q n jogou nenhum

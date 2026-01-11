@@ -16,7 +16,13 @@ dataset = d3rlpy.dataset.MDPDataset(
 
 # 2. Train the Offline RL Algorithm (e.g., CQL or IQL)
 # We use 'continuous' because we are recommending Vectors, not IDs
-cql = d3rlpy.algos.CQL(action_scaler="min_max", gamma=0, actor_learning_rate=1e-4, critic_learning_rate=3e-4, use_gpu=True) 
+cql = d3rlpy.algos.CQL(
+    action_scaler="min_max",
+    gamma=0,
+    actor_learning_rate=1e-4,
+    critic_learning_rate=3e-4,
+    use_gpu=True,
+)
 cql.fit(dataset, n_steps=10000)
 
 # 3. Save Model
