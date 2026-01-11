@@ -1,0 +1,115 @@
+ideia:
+    - banco de dados onde cada jogo tem as colunas 
+        - ano de lançamento
+        - genero
+        - sub genero
+        - nota dos criticos
+        - nota do publico
+        - plataforma
+        - time to beat
+        - palavras chave
+    - 30 jogos genericos pra saber o que recomendar
+    - o reward vai ser a nota que o usuario vai dar pro jogo. 5 vai ser uma nota neutra onde ele n jogou ou ele n gostou nem desgostou
+    - no hugginface
+
+sistema:
+    - thefuzz, rapidfuzz: os bancos tem os nomes dos jogos diferentes. gemini sugeriu fazer uma ligação baseada em fuzzy pra ter um rating de quanto uma string é parecida com a outra e fazer a relação de 2 titulos que significam o mesmo jogo
+        1. lowercase strings, remover pontuação, numeros romanos para numeros normais
+        2. compara 2 titulos apenas se eles foram lançados no mesmo ano
+        3. usar token_sort_ratio metric pra não ter diferença em titulos com palavras em ordem diferente
+        4. score > 90 = ok, score [70, 90] = ver a similaridade no nome da desenvolvedora, score < 70 = discarta
+    - preparar os bancos
+        - Steam-200k, "Video Game Reviews and Ratings Dataset"
+            - user, game, rating (public rating), online/offline
+        - "Multi-Decade Video Game Review Dataset" 
+            - platform, rating (public rating), Likes Received, Time Since Review
+        - "How Long to Beat Video Game Playtime Dataset"
+            - time to beat
+        - Steam Games Dataset
+            - release year, description, userscore, metascore
+        - Metacritic's Best Games and Reviews
+            - metascore, userscore, genres
+        - RAWG Games Dataset
+            - rating, tags
+        - IGDB (Internet Game Database) API
+            - cover art, resumo, ano de lançamento
+
+        - genero e sub genero -> multi hot encoded
+        - nota critico, nota publico, time to beat -> normalizar de 0 a 1
+        - descrição do jogo -> embedding gerado por word2vec
+
+        - tabela user x game com os valores sendo o rating precisa ser criada a partir dos datasets Video Game Reviews and Ratings Dataset e Multi-Decade Video Game Review Dataset
+        - cada game (N linhas) vai ter as seguintes informações (M colunas)
+            - titulo, 128 (usando item2vec)
+            - descrição do jogo/palavras chave, 128 (embedding gerado por word2vec)
+            - genero, 20 (usando multi hot encoding)
+            - ano de lançamento, 1 (min max scaling?)
+            - online/offline, 1 (1 se for online)
+            - plataforma, 10 (usando one hot encoding)
+            - time to beat, 3 (main, extra, 100%) (normalizar usando tanh np.tanh(df['time_to_beat'] / 50.0))
+            - nota dos criticos, 1 (usando min max scaling de 0-1)
+            - nota do usuário, 1 (fazendo uma media e depois usando min max scaling de 0-1)
+            - Collaborative Embedding, 32 (usando svd, Surprise (Python Library) ou sklearn, pra embedar baseado nas reviews dos usuarios, aka Video Game Reviews and Ratings Dataset)
+        - depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco Multi-Decade Video Game Review Dataset
+        - o banco vai ter a seguinte estrutura
+            - observations: array 2D (NxM), onde cada linha representa o estado de um usuario. 
+                - embedding do usuario 0 q n jogou nenhum
+                - embedding do usuario 1 q jogou o game A
+                - embedding do usuario 2 q jogou o game B
+                - embedding do usuario 3 q jogou o game A + game B fazendo um average ou usando uma tecnica de merge do embedding do game A com game B
+                - ...
+                - até acabar os reviews dos usuarios no dataset de review por data
+            - actions: array 2D (NxM), onde cada linha representa o embedding do game jogado pelo usuário da mesma linha ni em observations
+                - embedding do game A que o usuario 0 jogou
+                - embedding do game B que o usuario 1 jogou
+                - embedding do game A + B que o usuario 2 jogou
+                - embedding do game C que o usuario 3 jogou
+            - rewards: array (Nx1), onde cada linha representa o reward depois do usuario ni, jogar o jogo ni
+                - 1 pq o usuario 0 gostou do game A 
+                - -1 pq o usuario 1 n gostou do game B
+                - 0 pq o usuario 2 skipou o game B
+            - terminals: array (Nx1), onde cada linha representa se o usuario nunca mais deu review de nenhum outro jogo 
+                - 0 ja que o usuario 0 continuou 
+                - 0 ja que o usuario 1 continuou
+                - 1 ja que o usuario 2 n teve mais nenhuma review depois dessa
+    - offline reinforcement learning (batch RL) já que o método online precisaria de algo mais fácil de testar como zerar um mini game. método offline faz sem precisar ser real time
+    - RNN, SASRec ou averaging pra definir o state vector do usuario baseado no historico de jogos jogados
+    - usar deep q-networks DQN e conservative q-learning CQL devido ao alto numero de decisoes possiveis, por ser espaço de ações discreto, e ser off-policy já que aprende de dados gerados por outras politicas, pre requisito do offline RL
+    - sistema MDP (Markov Decision Process) (S, A, P, R, gamma)
+        - S state space -> st = phi(H), onde phi é o encoder (RNN ou transformer SASRec) do estado baseado no historico de games
+        - A action space -> a ~= 20k possiveis ações já que cada ação é uma recomendação de jogo
+        - P transition -> p(st+1|st, at), após uma recomendação at de um game X, o usuario interage e o historico dele se torna Ht+1 = Ht U (game X) -> st+1
+        - gamma discount factor -> dependendo do valor de gamma faz com que o sistema tome decisões de curto ou longo prazo
+        - R reward system -> rbase(s, a) = 1, -1 ou 0. rtotal = rbase + lambda * I(like) * tanh(user_playtime/main_story_time)
+    - mitigar o espaço de ações pra n ser exaustivo. Candidate Generation vai ser uma heuristica que vai fazer um search de embeddings que filtra os generos preferidos do usuario ou jogos parecidos com dos que ele ja jogou
+    - cold start -> popular o historico H0 e conseguir gerar o estado s0. acho que o cold start vai precisar incluir jogos que o usuario jogou ultimamente pra ter uma ideia de qual estado ele ta atualmente
+    - offline RL -> usar CQL que modifica a loss function do DQN pra penalizar ações que n existem no banco
+        - lossCQL = alpha * (soma[Q(s, a), onde a N ESTÁ no banco] - soma[Q(s, a), onde a ESTÁ no banco]) + standard bellman error
+        - d3rlpy
+    - pipeline de treino
+        1. prepara o banco e salva
+        2. carrega o banco como MDPDataset
+        3. instancia o d3rlpy.algos.CQL
+        4. treina por N epocas
+        5. salva a politica como torchscript model (.pt) pra deploy
+    - pipeline de inferência
+        1. carrega a politica no app do hugginface
+        2. usuario responde o cold start pra ter o estado s0
+        3. a heuristica candidate generator é chamada pra filtrar os jogos por ano e plataforma
+        4. faz a inferência RL com o modelo treinado
+        5. chama API IGDB pra mostrar os 5 melhores resultados com arte, descrição, etc
+        6. caso o usuario ja tenha jogado uma das 5 recomendações ou queira filtrar por algum tipo de info single player/ano de lançamento/developer, a partir do jogo que ele interagiu, atualizar com a próxima recomendação
+    - testar o modelo treinado usando 
+        - fitted q evaluation FQE no dataset estatico
+        - inverse propensity scoring IPS pra arrumar os pesos de rewards no dataset baseado no quao provavel é o modelo escolher a mesma ação do usuário do dataset
+    - atualizar um banco de dados via API pra saber se os usuários já jogaram as recomendações e atualizar o dataset
+
+duvidas:
+    + Collaborative Embedding: Use Matrix Factorization (SVD) on the User-Item interaction matrix to generate latent vectors that capture unobserved similarities based on co-play patterns?
+    + valores de gamma pro MDP pro caso especifico de decisao de jogos. sempre deve ser a curto prazo já que se ele ta acessando o sistema de recomendação pra saber o que ele vai gostar imediatamente
+        - gemini sugeriu colocar entre 0.0 e 0.5 que é mediano, assim ele foca no curto prazo
+    + o que é o R na tupla do MDP? é fixo ou é parametro? é o reward?
+    + pra adicionar ainda mais profundidade, pergunta se é possivel trocar o sistema de dislike, neutro e like em um game pela nota de 0 a 10. quais seriam as mudanças?
+        - só mudar as rewards pra ficar no range [-1,1]. pra isso vai precisar pre processar os ratings de 0 a 10 usando a formula (reward - 5)/5 e cuidar de ratings de jogos que ainda n foram jogados para 5 antes do pre processamento
+    + "The tanh function caps the bonus, preventing the agent from "hacking" the reward by only recommending 500-hour RPGs." Isso não fez sentido para mim já que se ele recomendasse jogos de baixo tempo pra zerar ele também teria grandes rewards bonus 
+        - ele achou que o user_playtime estaria no banco tb, por isso se confundiu. se tiver, acho melhor atualizar o reward system, se n é só usar o rbase mesmo baseado no rating de 0 a 10
