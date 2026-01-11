@@ -19,8 +19,6 @@ sistema:
         3. usar token_sort_ratio metric pra não ter diferença em titulos com palavras em ordem diferente
         4. score > 90 = ok, score [70, 90] = ver a similaridade no nome da desenvolvedora, score < 70 = discarta
     - preparar os bancos
-        - Steam-200k, "Video Game Reviews and Ratings Dataset"
-            - user, game, rating (public rating), online/offline
         - "Multi-Decade Video Game Review Dataset" 
             - platform, rating (public rating), Likes Received, Time Since Review
         - "How Long to Beat Video Game Playtime Dataset"
