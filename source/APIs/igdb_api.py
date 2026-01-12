@@ -1,7 +1,8 @@
 import os
 import requests
 from dotenv import load_dotenv
-from api_types import IGDBType
+from APIs.api_types import IGDBType
+import datetime
 
 
 class IGDB:
@@ -76,7 +77,9 @@ class IGDB:
                 ],
                 themes=[g["name"] for g in game.get("themes", [])],
                 rating=game.get("rating"),
-                first_release_date=game.get("first_release_date"),
+                first_release_date=datetime.datetime.fromtimestamp(
+                    int(game.get("first_release_date", "0")), datetime.timezone.utc
+                ),
                 genres=[g["name"] for g in game.get("genres", [])],
                 cover_url=game.get("cover", {}).get("url"),
                 summary=game.get("summary"),
@@ -84,26 +87,3 @@ class IGDB:
             igdb_results.append(igdb_obj)
 
         return igdb_results
-
-
-# --- Execution ---
-if __name__ == "__main__":
-    igdb = IGDB()
-    results = igdb.search("Elden Ring", max_n=1)
-
-    for game in results:
-        print("\n--- Game Found ---")
-        print(f"ID: {game.id}")
-        print(f"Name: {game.name}")
-        print(f"Game Modes: {game.game_modes}")
-        print(f"Game Type: {game.game_type}")
-        print(f"Keywords: {game.keywords}")
-        print(f"Language Supports: {game.language_supports}")
-        print(f"Platforms: {game.platforms}")
-        print(f"Player Perspectives: {game.player_perspectives}")
-        print(f"Themes: {game.themes}")
-        print(f"Rating: {game.rating}")
-        print(f"First Release Date: {game.first_release_date}")
-        print(f"Genres: {game.genres}")
-        print(f"Cover URL: {game.cover_url}")
-        print(f"Summary: {game.summary}")

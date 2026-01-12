@@ -47,3 +47,36 @@ class HLTBType:
     main_story: Optional[float]
     main_extra: Optional[float]
     completionist: Optional[float]
+
+
+@dataclass
+class GamespotType:
+    id: int
+    name: str
+    themes: List[str]
+    release_date: Optional[int]
+    genres: List[str]
+    cover_url: Optional[str]
+    description: Optional[str]
+
+
+@dataclass
+class GameType:
+    id: int
+    name: str
+    released: str
+    rawg_rating: Optional[float]
+    igdb_rating: Optional[float]
+    hltb_rating: Optional[float]
+    metacritic_rating: Optional[float]
+    platforms: List[str]
+    main_story: Optional[float]
+    main_extra: Optional[float]
+    completionist: Optional[float]
+    cover_url: Optional[str]
+    developers: List[str]
+    publishers: List[str]
+    description: Optional[str]
+    language_supports: List[str]
+    genres: List[str]
+    keywords: List[str]

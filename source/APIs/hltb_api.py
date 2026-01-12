@@ -1,5 +1,5 @@
 from howlongtobeatpy import HowLongToBeat
-from api_types import HLTBType
+from APIs.api_types import HLTBType
 
 
 class HLTB:
@@ -36,20 +36,3 @@ class HLTB:
             hltb_results.append(hltb_obj)
 
         return hltb_results
-
-
-# --- Execution ---
-if __name__ == "__main__":
-    hltb = HLTB()
-    results = hltb.search("Clair Obscur", max_n=1)
-
-    for game in results:
-        print("\n--- Game Found ---")
-        print(f"Game Name: {game.game_name}")
-        print(f"Game Type: {game.game_type}")
-        print(f"Review Score: {game.review_score}")
-        print(f"Profile Platforms: {game.profile_platforms}")
-        print(f"Release World: {game.release_world}")
-        print(f"Main Story: {game.main_story}")
-        print(f"Main + Extra: {game.main_extra}")
-        print(f"Completionist: {game.completionist}")

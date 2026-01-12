@@ -16,6 +16,26 @@ conda activate GameAdvisor
 pip install -r requirements.txt
 ```
 
+- Create the env file with the following vars:
+```bash
+GAMESPOT_API_KEY=
+RAWG_API_KEY=
+IGDB_CLIENT_SECRET=
+IGDB_CLIENT_ID=
+```
+
 ## Run
 
+### Create the user game review dataset
+
 In game-advisor folder run:
+
+```bash
+python source/scripts/create_user_review_dataset.py
+```
+
+### Create the game dataset
+
+```bash
+python source/scripts/create_game_dataset.py
+```
