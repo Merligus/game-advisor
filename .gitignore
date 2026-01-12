@@ -2,3 +2,5 @@
 *.xls
 *.pyc
 *.env
+
+!gamespot_reviews.csv
