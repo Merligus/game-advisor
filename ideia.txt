@@ -107,3 +107,7 @@ duvidas:
         - só mudar as rewards pra ficar no range [-1,1]. pra isso vai precisar pre processar os ratings de 0 a 10 usando a formula (reward - 5)/5 e cuidar de ratings de jogos que ainda n foram jogados para 5 antes do pre processamento
     + "The tanh function caps the bonus, preventing the agent from "hacking" the reward by only recommending 500-hour RPGs." Isso não fez sentido para mim já que se ele recomendasse jogos de baixo tempo pra zerar ele também teria grandes rewards bonus 
         - ele achou que o user_playtime estaria no banco tb, por isso se confundiu. se tiver, acho melhor atualizar o reward system, se n é só usar o rbase mesmo baseado no rating de 0 a 10
+
+updates:
+    - criei os modulos de APIs pra pegar o metadata de qualquer jogo
+    - preciso pegar a lista de todos os jogos da tabela user/game/review e montar a tabela de game com o metadata
