@@ -111,3 +111,4 @@ duvidas:
 updates:
     - criei os modulos de APIs pra pegar o metadata de qualquer jogo
     - preciso pegar a lista de todos os jogos da tabela user/game/review e montar a tabela de game com o metadata
+    - vou pegar reviews do metacritic pra ter uma tabela melhor de user/game/review
