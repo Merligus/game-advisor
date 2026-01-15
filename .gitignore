@@ -4,3 +4,4 @@
 *.env
 
 !gamespot_reviews.csv
+!metacritic_reviews.csv

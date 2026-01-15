@@ -18,7 +18,7 @@ reviews_data = []
 fetched_users = set()
 
 # For each game, fetch Metacritic user reviews
-start_id = 4227
+start_id = 0
 for gn, game_name in enumerate(unique_games[start_id:]):
     try:
         # Find name of the game in the Metacritic API
