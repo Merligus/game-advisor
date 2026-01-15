@@ -18,16 +18,16 @@ reviews_data = []
 fetched_users = set()
 
 # For each game, fetch Metacritic user reviews
-start_id = 0
-try:
-    for gn, game_name in enumerate(unique_games[start_id:]):
+start_id = 4227
+for gn, game_name in enumerate(unique_games[start_id:]):
+    try:
         # Find name of the game in the Metacritic API
         find_url = f"https://backend.metacritic.com/finder/metacritic/search/{game_name}/web?apiKey={METACRITIC_API_KEY}&limit=30&offset=0"
         find_response = requests.get(find_url)
         find_data = find_response.json()
         if not "data" in find_data:
             print(f"Error with {game_name}")
-            break
+            continue
 
         game_slug = ""
         best_ratio = 0.0
@@ -113,19 +113,24 @@ try:
         # debug
         # if gn > 5:
         #     break
-except Exception as e:
-    traceback.print_exc()
-finally:
-    # Save results to CSV with append mode
-    df_reviews = pd.DataFrame(reviews_data)
+    except Exception as e:
+        print(50 * "*")
+        print(50 * "-")
+        traceback.print_exc()
+        print(50 * "-")
+        print(50 * "*")
 
-    # Check if file exists and append
-    if os.path.exists("./data/metacritic_reviews.csv") and start_id > 0:
-        # Append to existing file without loading all data into memory
-        df_reviews.to_csv(
-            "./data/metacritic_reviews.csv", mode="a", header=False, index=False
-        )
-        print(f"Appended {len(df_reviews)} reviews to ./data/metacritic_reviews.csv")
-    else:
-        df_reviews.to_csv("./data/metacritic_reviews.csv", index=False)
-        print(f"Saved {len(df_reviews)} reviews to ./data/metacritic_reviews.csv")
+
+# Save results to CSV with append mode
+df_reviews = pd.DataFrame(reviews_data)
+
+# Check if file exists and append
+if os.path.exists("./data/metacritic_reviews.csv") and start_id > 0:
+    # Append to existing file without loading all data into memory
+    df_reviews.to_csv(
+        "./data/metacritic_reviews.csv", mode="a", header=False, index=False
+    )
+    print(f"Appended {len(df_reviews)} reviews to ./data/metacritic_reviews.csv")
+else:
+    df_reviews.to_csv("./data/metacritic_reviews.csv", index=False)
+    print(f"Saved {len(df_reviews)} reviews to ./data/metacritic_reviews.csv")
