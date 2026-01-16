@@ -18,9 +18,7 @@ class Gamespot:
         search_url = f"https://www.gamespot.com/api/games/?limit={max_n}&filter=name:{game_name}&api_key={self.api_key}"
 
         # Set headers for the request
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(search_url, headers=headers)
         response.raise_for_status()
 

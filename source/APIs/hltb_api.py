@@ -17,9 +17,7 @@ class HLTB:
             return []
 
         # Sort by similarity and return top max_n results
-        sorted_results = sorted(
-            results_list, key=lambda x: x.similarity, reverse=True
-        )[:max_n]
+        sorted_results = sorted(results_list, key=lambda x: x.similarity, reverse=True)[:max_n]
 
         hltb_results = []
         for result in sorted_results:

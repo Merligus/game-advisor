@@ -14,9 +14,7 @@ class RAWG:
         Searches for games by name and retrieves details.
         Returns a list of RAWGType objects.
         """
-        search_url = (
-            f"https://api.rawg.io/api/games?search={game_name}&key={self.api_key}"
-        )
+        search_url = f"https://api.rawg.io/api/games?search={game_name}&key={self.api_key}"
 
         response = requests.get(search_url)
         response.raise_for_status()
@@ -41,22 +39,12 @@ class RAWG:
                 name=game_data.get("name"),
                 released=game_data.get("released"),
                 rating=game_data.get("rating"),
-                metacritic=(
-                    game_data.get("metacritic") if game_data.get("metacritic") else ""
-                ),
+                metacritic=(game_data.get("metacritic") if game_data.get("metacritic") else ""),
                 playtime=game_data.get("playtime"),
-                platforms=[
-                    p.get("platform", {}).get("name")
-                    for p in game_data.get("platforms", [])
-                    if p.get("platform") is not None
-                ],
+                platforms=[p.get("platform", {}).get("name") for p in game_data.get("platforms", []) if p.get("platform") is not None],
                 genres=[g.get("name") for g in game_data.get("genres", [])],
                 tags=[t.get("name") for t in game_data.get("tags", [])],
-                esrb_rating=(
-                    game_data.get("esrb_rating", {}).get("name")
-                    if game_data.get("esrb_rating")
-                    else ""
-                ),
+                esrb_rating=(game_data.get("esrb_rating", {}).get("name") if game_data.get("esrb_rating") else ""),
                 developers=[d.get("name") for d in game_data.get("developers", [])],
                 publishers=[p.get("name") for p in game_data.get("publishers", [])],
                 description=game_data.get("description_raw"),

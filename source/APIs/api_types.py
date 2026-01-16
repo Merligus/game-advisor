@@ -70,7 +70,7 @@ class MetacriticType:
     platforms: List[str]
     critic_score: Optional[int]
     user_score: Optional[int]
-    
+
 
 @dataclass
 class GameType:

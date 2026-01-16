@@ -49,26 +49,11 @@ class Metacritic:
                 metacritic_obj = MetacriticType(
                     name=metadata.get("title"),
                     release_date=metadata.get("releaseDate", ""),
-                    developers=[
-                        company["name"]
-                        for company in metadata.get("production", {}).get(
-                            "companies", []
-                        )
-                        if company["typeName"] == "Developer"
-                    ],
-                    publishers=[
-                        company["name"]
-                        for company in metadata.get("production", {}).get(
-                            "companies", []
-                        )
-                        if company["typeName"] == "Publisher"
-                    ],
+                    developers=[company["name"] for company in metadata.get("production", {}).get("companies", []) if company["typeName"] == "Developer"],
+                    publishers=[company["name"] for company in metadata.get("production", {}).get("companies", []) if company["typeName"] == "Publisher"],
                     genres=[genre["name"] for genre in metadata.get("genres", [])],
-                    platforms=[
-                        platform["name"] for platform in metadata.get("platforms", [])
-                    ],
-                    critic_score=critics_score.get("score", 0)
-                    / critics_score.get("max", 1),
+                    platforms=[platform["name"] for platform in metadata.get("platforms", [])],
+                    critic_score=critics_score.get("score", 0) / critics_score.get("max", 1),
                     user_score=user_score.get("score", 0) / user_score.get("max", 1),
                 )
                 print(f"ratio: {name_ratio} name: {metacritic_obj.name}")

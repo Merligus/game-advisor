@@ -68,18 +68,12 @@ class IGDB:
                 game_modes=[g["name"] for g in game.get("game_modes", [])],
                 game_type=game.get("game_type", {}).get("type"),
                 keywords=[g["name"] for g in game.get("keywords", [])],
-                language_supports=[
-                    g["language"]["name"] for g in game.get("language_supports", [])
-                ],
+                language_supports=[g["language"]["name"] for g in game.get("language_supports", [])],
                 platforms=[g["name"] for g in game.get("platforms", [])],
-                player_perspectives=[
-                    g["name"] for g in game.get("player_perspectives", [])
-                ],
+                player_perspectives=[g["name"] for g in game.get("player_perspectives", [])],
                 themes=[g["name"] for g in game.get("themes", [])],
                 rating=game.get("rating"),
-                first_release_date=datetime.datetime.fromtimestamp(
-                    int(game.get("first_release_date", "0")), datetime.timezone.utc
-                ),
+                first_release_date=datetime.datetime.fromtimestamp(int(game.get("first_release_date", "0")), datetime.timezone.utc),
                 genres=[g["name"] for g in game.get("genres", [])],
                 cover_url=game.get("cover", {}).get("url"),
                 summary=game.get("summary"),

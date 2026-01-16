@@ -50,11 +50,7 @@ for gn, game_name in enumerate(unique_games[start_id:]):
             break
 
         # Concatenate positive, negative, neutral reviews
-        reviews = (
-            game_data["data"]["item"].get("positive", [])
-            + game_data["data"]["item"].get("negative", [])
-            + game_data["data"]["item"].get("neutral", [])
-        )
+        reviews = game_data["data"]["item"].get("positive", []) + game_data["data"]["item"].get("negative", []) + game_data["data"]["item"].get("neutral", [])
 
         # For each review, get user_name and fetch their profile
         for rn, review in enumerate(reviews):
@@ -79,9 +75,7 @@ for gn, game_name in enumerate(unique_games[start_id:]):
                     print(f"Error with {user_name}")
                     break
                 total_results = user_data["data"]["totalResults"]
-                print(
-                    f"\t{user_name} has {total_results} reviews. currently in page {offset}"
-                )
+                print(f"\t{user_name} has {total_results} reviews. currently in page {offset}")
 
                 if total_results >= 3:
                     # Loop through user's reviews
@@ -90,17 +84,13 @@ for gn, game_name in enumerate(unique_games[start_id:]):
                             {
                                 "author": item.get("author"),
                                 "score": item.get("score"),
-                                "game_name": item.get("reviewedProduct", {}).get(
-                                    "title"
-                                ),
+                                "game_name": item.get("reviewedProduct", {}).get("title"),
                                 "date": item.get("date"),
                                 "type": item.get("reviewedProduct", {}).get("type"),
                                 "platform": item.get("platform"),
                             }
                         )
-                        print(
-                            f"\t\t{reviews_data[-1]['author']}, {reviews_data[-1]['score']}, {reviews_data[-1]['game_name']}, {reviews_data[-1]['date']}"
-                        )
+                        print(f"\t\t{reviews_data[-1]['author']}, {reviews_data[-1]['score']}, {reviews_data[-1]['game_name']}, {reviews_data[-1]['date']}")
 
                     offset += limit
                     if offset >= total_results:
@@ -127,9 +117,7 @@ df_reviews = pd.DataFrame(reviews_data)
 # Check if file exists and append
 if os.path.exists("./data/metacritic_reviews.csv") and start_id > 0:
     # Append to existing file without loading all data into memory
-    df_reviews.to_csv(
-        "./data/metacritic_reviews.csv", mode="a", header=False, index=False
-    )
+    df_reviews.to_csv("./data/metacritic_reviews.csv", mode="a", header=False, index=False)
     print(f"Appended {len(df_reviews)} reviews to ./data/metacritic_reviews.csv")
 else:
     df_reviews.to_csv("./data/metacritic_reviews.csv", index=False)
