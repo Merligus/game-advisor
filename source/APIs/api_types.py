@@ -61,6 +61,18 @@ class GamespotType:
 
 
 @dataclass
+class MetacriticType:
+    name: str
+    release_date: Optional[str]
+    developers: List[str]
+    publishers: List[str]
+    genres: List[str]
+    platforms: List[str]
+    critic_score: Optional[int]
+    user_score: Optional[int]
+    
+
+@dataclass
 class GameType:
     id: int
     name: str
@@ -69,11 +81,12 @@ class GameType:
     igdb_rating: Optional[float]
     hltb_rating: Optional[float]
     metacritic_rating: Optional[float]
+    user_rating: Optional[float]
     platforms: List[str]
     main_story: Optional[float]
     main_extra: Optional[float]
     completionist: Optional[float]
-    cover_url: Optional[str]
+    cover_url: List[str]
     developers: List[str]
     publishers: List[str]
     description: Optional[str]
