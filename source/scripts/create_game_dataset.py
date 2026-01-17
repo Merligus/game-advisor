@@ -110,13 +110,18 @@ if __name__ == "__main__":
     minRatio = 0.65
     maxRetries = 3
     retryN = 0
+    saveEveryNGames = 10
+    # Rate limit handling
+    baseDelay = 1  # seconds between API calls
+    rateLimitBackoff = 60  # seconds to wait on rate limit
     # Debug
     debug = False
     maxGames = 2
 
     # Load gamespot reviews
     df_reviews = pd.read_csv("./data/reviews.csv")
-    unique_games = df_reviews["game_name"].unique()
+    unique_games = [f"{game_name}" for game_name in df_reviews["game_name"].unique()]
+    unique_games.sort()
     gi = 0
     while gi < len(unique_games):
         game_name = unique_games[gi]
@@ -124,6 +129,7 @@ if __name__ == "__main__":
             # Query and get the first result
             # Gamespot
             results_gamespot = gamespot.search(game_name, max_n=1)
+            sleep(baseDelay)
             game_gamespot = results_gamespot[0] if len(results_gamespot) > 0 else GamespotType()
             game_gamespot = game_gamespot if nameRatio(game_gamespot.name, game_name) > minRatio else GamespotType()
             game_release = game_gamespot.release
@@ -131,21 +137,25 @@ if __name__ == "__main__":
             showResults("Gamespot", results_gamespot, game_name, game_release, debug)
             # RAWG
             results_rawg = rawg.search(game_name, max_n=1)
+            sleep(baseDelay)
             game_rawg = results_rawg[0] if len(results_rawg) > 0 else RAWGType()
             game_rawg = game_rawg if nameRatio(game_rawg.name, game_name) > goodRatio or (nameRatio(game_rawg.name, game_name) > minRatio and compareRelease(game_rawg.release, game_release)) else RAWGType()
             showResults("RAWG", results_rawg, game_name, game_release, debug)
             # IGDB
             results_igdb = igdb.search(game_name, max_n=1)
+            sleep(baseDelay)
             game_igdb = results_igdb[0] if len(results_igdb) > 0 else IGDBType()
             game_igdb = game_igdb if nameRatio(game_igdb.name, game_name) > goodRatio or (nameRatio(game_igdb.name, game_name) > minRatio and compareRelease(game_igdb.release, game_release)) else IGDBType()
             showResults("IGDB", results_igdb, game_name, game_release, debug)
             # HLTB
             results_hltb = hltb.search(game_name, max_n=1)
+            sleep(baseDelay)
             game_hltb = results_hltb[0] if len(results_hltb) > 0 else HLTBType()
             game_hltb = game_hltb if nameRatio(game_hltb.name, game_name) > goodRatio or (nameRatio(game_hltb.name, game_name) > minRatio and compareRelease(game_hltb.release, game_release)) else HLTBType()
             showResults("HLTB", results_hltb, game_name, game_release, debug)
             # Metacritic
             results_metacritic = metacritic.search(game_name, max_n=1)
+            sleep(baseDelay)
             game_metacritic = results_metacritic[0] if len(results_metacritic) > 0 else MetacriticType()
             game_metacritic = game_metacritic if nameRatio(game_metacritic.name, game_name) > goodRatio or (nameRatio(game_metacritic.name, game_name) > minRatio and compareRelease(game_metacritic.release, game_release)) else MetacriticType()
             showResults("Metacritic", results_metacritic, game_name, game_release, debug)
@@ -175,6 +185,13 @@ if __name__ == "__main__":
             gi += 1
             retryN = 0
 
+            # Save every N games to not lose
+            if gi % saveEveryNGames == 0:
+                # Save results to CSV with append mode
+                df_games = pd.DataFrame(game_list)
+                df_games.to_csv("./data/games.csv", index=False)
+                print(f"Saved {len(df_games)} games to ./data/games.csv")
+
             # Debug
             if debug:
                 print(f"\tid: {game_obj.id}")
@@ -201,11 +218,18 @@ if __name__ == "__main__":
                 if gi == maxGames:
                     break
         except Exception as e:
+            error_msg = str(e).lower()
+            is_rate_limit = any(keyword in error_msg for keyword in ["rate limit", "429", "420", "too many requests", "quota"])
+
             print(50 * "*")
             print(50 * "-")
+            if is_rate_limit:
+                print(f"RATE LIMIT EXCEEDED - Waiting {rateLimitBackoff} seconds...")
+                sleep(rateLimitBackoff)
             traceback.print_exc()
             print(50 * "-")
             print(50 * "*")
+
             # Wait
             sleep(3)
             # Continue if maxRetries reached
