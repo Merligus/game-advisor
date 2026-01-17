@@ -1,95 +1,53 @@
-from dataclasses import dataclass
-from typing import List, Optional
-
-
-@dataclass
-class IGDBType:
-    id: int
-    name: str
-    game_modes: List[str]
-    game_type: str
-    keywords: List[str]
-    language_supports: List[str]
-    platforms: List[str]
-    player_perspectives: List[str]
-    themes: List[str]
-    rating: Optional[float]
-    first_release_date: Optional[int]
-    genres: List[str]
-    cover_url: Optional[str]
-    summary: Optional[str]
-
-
-@dataclass
-class RAWGType:
-    id: int
-    name: str
-    released: Optional[str]
-    rating: Optional[float]
-    metacritic: Optional[int]
-    playtime: Optional[int]
-    platforms: List[str]
-    genres: List[str]
-    tags: List[str]
-    esrb_rating: Optional[str]
-    developers: List[str]
-    publishers: List[str]
-    description: Optional[str]
-
-
-@dataclass
-class HLTBType:
-    game_name: str
-    game_type: str
-    review_score: Optional[float]
-    profile_platforms: List[str]
-    release_world: Optional[str]
-    main_story: Optional[float]
-    main_extra: Optional[float]
-    completionist: Optional[float]
-
-
-@dataclass
-class GamespotType:
-    id: int
-    name: str
-    themes: List[str]
-    release_date: Optional[int]
-    genres: List[str]
-    cover_url: Optional[str]
-    description: Optional[str]
-
-
-@dataclass
-class MetacriticType:
-    name: str
-    release_date: Optional[str]
-    developers: List[str]
-    publishers: List[str]
-    genres: List[str]
-    platforms: List[str]
-    critic_score: Optional[int]
-    user_score: Optional[int]
+from dataclasses import dataclass, field
+from typing import List
 
 
 @dataclass
 class GameType:
-    id: int
-    name: str
-    released: str
-    rawg_rating: Optional[float]
-    igdb_rating: Optional[float]
-    hltb_rating: Optional[float]
-    metacritic_rating: Optional[float]
-    user_rating: Optional[float]
-    platforms: List[str]
-    main_story: Optional[float]
-    main_extra: Optional[float]
-    completionist: Optional[float]
-    cover_url: List[str]
-    developers: List[str]
-    publishers: List[str]
-    description: Optional[str]
-    language_supports: List[str]
-    genres: List[str]
-    keywords: List[str]
+    id: int = 0
+    name: str = ""
+    release: str = ""
+    rawg_rating: float = 0.0
+    igdb_rating: float = 0.0
+    hltb_rating: float = 0.0
+    metacritic_rating: float = 0.0
+    user_rating: float = 0.0
+    platforms: List[str] = field(default_factory=list)
+    main_story: float = 0.0
+    main_extra: float = 0.0
+    completionist: float = 0.0
+    cover_url: List[str] = field(default_factory=list)
+    developers: List[str] = field(default_factory=list)
+    publishers: List[str] = field(default_factory=list)
+    description: str = ""
+    language_supports: List[str] = field(default_factory=list)
+    genres: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
+
+
+@dataclass
+class IGDBType(GameType):
+    game_modes: List[str] = field(default_factory=list)
+    game_type: str = ""
+    player_perspectives: List[str] = field(default_factory=list)
+    themes: List[str] = field(default_factory=list)
+
+
+@dataclass
+class RAWGType(GameType):
+    esrb_rating: str = ""
+
+
+@dataclass
+class HLTBType(GameType):
+    game_type: str = ""
+
+
+@dataclass
+class GamespotType(GameType):
+    themes: List[str] = field(default_factory=list)
+
+
+@dataclass
+class MetacriticType(GameType):
+    slug: str = ""

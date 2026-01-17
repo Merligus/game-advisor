@@ -3,12 +3,16 @@ from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
 from APIs.api_types import GamespotType
+from datetime import datetime
 
 
 class Gamespot:
     def __init__(self):
         load_dotenv()
         self.api_key = os.getenv("GAMESPOT_API_KEY")
+        
+        # Format pattern to get release date 2025-04-24 12:00:00
+        self.format_pattern = "%Y-%m-%d %H:%M:%S"
 
     def search(self, game_name: str, max_n: int = 1) -> list[GamespotType]:
         """
@@ -44,9 +48,9 @@ class Gamespot:
                 id=int(game.findtext("id", 0)),
                 name=game.findtext("name"),
                 themes=[theme.findtext("name") for theme in game.findall("theme")],
-                release_date=game.findtext("release_date"),
+                release=datetime.strptime(game.findtext("release_date"), self.format_pattern).strftime("%Y-%m-%d"),
                 genres=[genre.findtext("name") for genre in game.findall("genre")],
-                cover_url=game.findtext("image/original"),
+                cover_url=[game.findtext("image/original")],
                 description=game.findtext("description"),
             )
             gamespot_results.append(gamespot_obj)

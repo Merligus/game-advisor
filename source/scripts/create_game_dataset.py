@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import traceback
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -8,8 +9,86 @@ from APIs.igdb_api import IGDB
 from APIs.rawg_api import RAWG
 from APIs.gamespot_api import Gamespot
 from APIs.metacritic_api import Metacritic
-from APIs.api_types import GameType
-import pandas
+from APIs.api_types import (
+    RAWGType,
+    IGDBType,
+    HLTBType,
+    GamespotType,
+    MetacriticType,
+    GameType,
+)
+import pandas as pd
+from thefuzz import fuzz
+from datetime import datetime
+
+
+def nameRatio(name1: str, name2: str) -> bool:
+    return fuzz.ratio(name1, name2) / 100.0
+
+
+def compareRelease(date1_s: str, date2_s: str) -> bool:
+    format_pattern = "%Y-%m-%d"
+    if len(date1_s) == 0 or len(date2_s) == 0:
+        return False
+    date1 = datetime.strptime(date1_s, format_pattern)
+    date2 = datetime.strptime(date2_s, format_pattern)
+    return abs(date1.year - date2.year) <= 1
+
+
+def getFirstString(str_list: list) -> str:
+    for s in str_list:
+        if len(s) > 0:
+            return s
+    return ""
+
+
+def getFirstFloat(float_list: list) -> float:
+    for f in float_list:
+        if f > 0.0:
+            return f
+    return 0.0
+
+
+def getFirstList(list_of_list: list) -> list:
+    for l in list_of_list:
+        if len(l) > 0:
+            return l
+    return []
+
+
+def getUnion(list_of_list: list) -> list:
+    result = []
+    for l in list_of_list:
+        result += l
+    return result
+
+
+def showResults(api: str, results: GameType, game_name: str, game_release: str, debug: bool):
+    if not debug:
+        return
+    print(f"\t-- {api} {len(results)}")
+    game = results[0] if len(results) > 0 else GameType()
+    print(f"\t\t{nameRatio(game.name, game_name)} {compareRelease(game.release, game_release)}")
+    print(f"\t\tid: {game.id}")
+    print(f"\t\tname: {game.name}")
+    print(f"\t\trelease: {game.release}")
+    print(f"\t\trawg_rating: {game.rawg_rating}")
+    print(f"\t\tigdb_rating: {game.igdb_rating}")
+    print(f"\t\thltb_rating: {game.hltb_rating}")
+    print(f"\t\tmetacritic_rating: {game.metacritic_rating}")
+    print(f"\t\tuser_rating: {game.user_rating}")
+    print(f"\t\tplatforms: {game.platforms[:5]}")
+    print(f"\t\tmain_story: {game.main_story}")
+    print(f"\t\tmain_extra: {game.main_extra}")
+    print(f"\t\tcompletionist: {game.completionist}")
+    print(f"\t\tcover_url: {game.cover_url}")
+    print(f"\t\tdevelopers: {game.developers[:5]}")
+    print(f"\t\tpublishers: {game.publishers[:5]}")
+    print(f"\t\tlanguage_supports: {game.language_supports[:5]}")
+    print(f"\t\tgenres: {game.genres[:5]}")
+    print(f"\t\tkeywords: {game.keywords[:5]}")
+    print(f"\t\tdescription: {game.description[:10]}")
+
 
 if __name__ == "__main__":
     # APIs modules
@@ -19,99 +98,105 @@ if __name__ == "__main__":
     gamespot = Gamespot()
     metacritic = Metacritic()
 
-    # aggregation list
-    game_list: list[GameType] = []
+    # Aggregation list
+    game_list = []
 
-    game_name = "Clair Obscur: Expedition 33"
+    # Parameters
+    goodRatio = 0.9
+    minRatio = 0.65
+    debug = False
+    maxGames = 2
 
-    # query
-    results_rawg = rawg.search(game_name, max_n=1)
-    results_igdb = igdb.search(game_name, max_n=1)
-    results_hltb = hltb.search(game_name, max_n=1)
-    results_gamespot = gamespot.search(game_name, max_n=1)
-    results_metacritic = metacritic.search(game_name, max_n=1)
+    # Load gamespot reviews
+    df_reviews = pd.read_csv("./data/reviews.csv")
+    unique_games = df_reviews["game_name"].unique()
+    for gi, game_name in enumerate(unique_games):
+        try:
+            # Query and get the first result
+            # Gamespot
+            results_gamespot = gamespot.search(game_name, max_n=1)
+            game_gamespot = results_gamespot[0] if len(results_gamespot) > 0 else GamespotType()
+            game_gamespot = game_gamespot if nameRatio(game_gamespot.name, game_name) > minRatio else GamespotType()
+            game_release = game_gamespot.release
+            print(game_name, game_release)
+            showResults("Gamespot", results_gamespot, game_name, game_release, debug)
+            # RAWG
+            results_rawg = rawg.search(game_name, max_n=1)
+            game_rawg = results_rawg[0] if len(results_rawg) > 0 else RAWGType()
+            game_rawg = game_rawg if nameRatio(game_rawg.name, game_name) > goodRatio or (nameRatio(game_rawg.name, game_name) > minRatio and compareRelease(game_rawg.release, game_release)) else RAWGType()
+            showResults("RAWG", results_rawg, game_name, game_release, debug)
+            # IGDB
+            results_igdb = igdb.search(game_name, max_n=1)
+            game_igdb = results_igdb[0] if len(results_igdb) > 0 else IGDBType()
+            game_igdb = game_igdb if nameRatio(game_igdb.name, game_name) > goodRatio or (nameRatio(game_igdb.name, game_name) > minRatio and compareRelease(game_igdb.release, game_release)) else IGDBType()
+            showResults("IGDB", results_igdb, game_name, game_release, debug)
+            # HLTB
+            results_hltb = hltb.search(game_name, max_n=1)
+            game_hltb = results_hltb[0] if len(results_hltb) > 0 else HLTBType()
+            game_hltb = game_hltb if nameRatio(game_hltb.name, game_name) > goodRatio or (nameRatio(game_hltb.name, game_name) > minRatio and compareRelease(game_hltb.release, game_release)) else HLTBType()
+            showResults("HLTB", results_hltb, game_name, game_release, debug)
+            # Metacritic
+            results_metacritic = metacritic.search(game_name, max_n=1)
+            game_metacritic = results_metacritic[0] if len(results_metacritic) > 0 else MetacriticType()
+            game_metacritic = game_metacritic if nameRatio(game_metacritic.name, game_name) > goodRatio or (nameRatio(game_metacritic.name, game_name) > minRatio and compareRelease(game_metacritic.release, game_release)) else MetacriticType()
+            showResults("Metacritic", results_metacritic, game_name, game_release, debug)
 
-    for game in results_rawg:
-        print("\n--- Game Found ---")
-        print(f"ID: {game.id}")
-        print(f"Name: {game.name}")
-        print(f"Released: {game.released}")
-        print(f"Rating: {game.rating}")
-        print(f"Metacritic: {game.metacritic}")
-        print(f"Playtime: {game.playtime}")
-        print(f"Platforms: {game.platforms}")
-        print(f"Genres: {game.genres}")
-        print(f"Tags: {game.tags}")
-        print(f"ESRB Rating: {game.esrb_rating}")
-        print(f"Developers: {game.developers}")
-        print(f"Publishers: {game.publishers}")
-        print(f"Description: {game.description}")
+            game_obj = GameType(
+                id=gi,
+                name=getFirstString([game.name for game in [game_gamespot, game_rawg, game_igdb, game_hltb, game_metacritic]]),
+                release=game_release,
+                rawg_rating=game_rawg.rawg_rating,
+                igdb_rating=game_igdb.igdb_rating,
+                hltb_rating=game_hltb.hltb_rating,
+                metacritic_rating=getFirstFloat([game.metacritic_rating for game in [game_metacritic, game_rawg]]),
+                user_rating=game_metacritic.user_rating,
+                platforms=getFirstList([game.platforms for game in [game_igdb, game_rawg, game_hltb, game_metacritic]]),
+                main_story=getFirstFloat([game.main_story for game in [game_hltb, game_rawg]]),
+                main_extra=game_hltb.main_extra,
+                completionist=game_hltb.completionist,
+                cover_url=getUnion([game.cover_url for game in [game_igdb, game_gamespot]]),
+                developers=getFirstList([game.developers for game in [game_metacritic, game_rawg]]),
+                publishers=getFirstList([game.publishers for game in [game_metacritic, game_rawg]]),
+                description=getFirstString([game.description for game in [game_gamespot, game_rawg, game_igdb]]),
+                language_supports=game_igdb.language_supports,
+                genres=getUnion([game.genres for game in [game_rawg, game_igdb, game_gamespot, game_metacritic]]),
+                keywords=getUnion([game.keywords for game in [game_rawg, game_igdb]] + [game_igdb.themes] + [game_igdb.game_modes] + [game_igdb.player_perspectives] + [[game_rawg.esrb_rating]] + [game_gamespot.themes]),
+            )
+            game_list.append(game_obj)
 
-    for game in results_igdb:
-        print("\n--- Game Found ---")
-        print(f"ID: {game.id}")
-        print(f"Name: {game.name}")
-        print(f"Game Modes: {game.game_modes}")
-        print(f"Game Type: {game.game_type}")
-        print(f"Keywords: {game.keywords}")
-        print(f"Language Supports: {game.language_supports}")
-        print(f"Platforms: {game.platforms}")
-        print(f"Player Perspectives: {game.player_perspectives}")
-        print(f"Themes: {game.themes}")
-        print(f"Rating: {game.rating}")
-        print(f"First Release Date: {game.first_release_date}")
-        print(f"Genres: {game.genres}")
-        print(f"Cover URL: {game.cover_url}")
-        print(f"Summary: {game.summary}")
+            # Debug
+            if debug:
+                print(f"\tid: {game_obj.id}")
+                print(f"\tname: {game_obj.name}")
+                print(f"\trelease: {game_obj.release}")
+                print(f"\trawg_rating: {game_obj.rawg_rating}")
+                print(f"\tigdb_rating: {game_obj.igdb_rating}")
+                print(f"\thltb_rating: {game_obj.hltb_rating}")
+                print(f"\tmetacritic_rating: {game_obj.metacritic_rating}")
+                print(f"\tuser_rating: {game_obj.user_rating}")
+                print(f"\tplatforms: {game_obj.platforms[:5]}")
+                print(f"\tmain_story: {game_obj.main_story}")
+                print(f"\tmain_extra: {game_obj.main_extra}")
+                print(f"\tcompletionist: {game_obj.completionist}")
+                print(f"\tcover_url: {game_obj.cover_url}")
+                print(f"\tdevelopers: {game_obj.developers[:5]}")
+                print(f"\tpublishers: {game_obj.publishers[:5]}")
+                print(f"\tlanguage_supports: {game_obj.language_supports[:5]}")
+                print(f"\tgenres: {game_obj.genres[:5]}")
+                print(f"\tkeywords: {game_obj.keywords[:5]}")
+                print(f"\tdescription: {game_obj.description[:10]}")
 
-    for game in results_hltb:
-        print("\n--- Game Found ---")
-        print(f"Game Name: {game.game_name}")
-        print(f"Game Type: {game.game_type}")
-        print(f"Review Score: {game.review_score}")
-        print(f"Profile Platforms: {game.profile_platforms}")
-        print(f"Release World: {game.release_world}")
-        print(f"Main Story: {game.main_story}")
-        print(f"Main + Extra: {game.main_extra}")
-        print(f"Completionist: {game.completionist}")
+                # Stop
+                if gi == maxGames:
+                    break
+        except Exception as e:
+            print(50 * "*")
+            print(50 * "-")
+            traceback.print_exc()
+            print(50 * "-")
+            print(50 * "*")
 
-    for game in results_gamespot:
-        print("\n--- Game Found ---")
-        print(f"ID: {game.id}")
-        print(f"Name: {game.name}")
-        print(f"Themes: {game.themes}")
-        print(f"Release_date: {game.release_date}")
-        print(f"Genres: {game.genres}")
-        print(f"Cover_url: {game.cover_url}")
-        print(f"Description: {game.description}")
-        
-    for game in results_metacritic:
-        print("\n--- Game Found ---")
-        print(f"Name: {game.name}")
-        print(f"Release_date: {game.release_date}")
-        print(f"Developers: {game.developers}")
-        print(f"Publishers: {game.publishers}")
-        print(f"Genres: {game.genres}")
-        print(f"Platforms: {game.platforms}")
-        print(f"Critic_score: {game.critic_score}")
-        print(f"User_score: {game.user_score}")
-    
-    # id: int -> i-esimo jogo
-    # name: str -> (Gamespot, RAWG, IGDB, HLTB, Metacritic)
-    # released: str -> (Gamespot, RAWG, IGDB, Metacritic, HLTB)
-    # rawg_rating: Optional[float] -> (RAWG)
-    # igdb_rating: Optional[float] -> (IGDB)
-    # hltb_rating: Optional[float] -> (HLTB)
-    # metacritic_rating: Optional[float] -> (Metacritic, RAWG)
-    # user_rating: Optional[float] -> (Metacritic)
-    # platforms: List[str] -> RAWG|IGDB|HLTB|Metacritic
-    # main_story: Optional[float] -> (HLTB, RAWG)
-    # main_extra: Optional[float] -> (HLTB)
-    # completionist: Optional[float] -> (HLTB)
-    # cover_url: Optional[str] -> IGDB|Gamespot
-    # developers: List[str] -> RAWG|Metacritic
-    # publishers: List[str] -> RAWG|Metacritic
-    # description: Optional[str] -> (Gamespot, RAWG, IGDB)
-    # language_supports: List[str] -> IGDB|
-    # genres: List[str] -> RAWG|IGDB|Metacritic
-    # keywords: List[str] -> RAWG|IGDB|Gamespot
+    # Save results to CSV with append mode
+    df_games = pd.DataFrame(game_list)
+    df_games.to_csv("./data/games.csv", index=False)
+    print(f"Saved {len(df_games)} games to ./data/games.csv")

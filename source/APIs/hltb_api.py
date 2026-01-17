@@ -1,10 +1,14 @@
 from howlongtobeatpy import HowLongToBeat
 from APIs.api_types import HLTBType
+from datetime import datetime
 
 
 class HLTB:
     def __init__(self):
         self.client = HowLongToBeat()
+        
+        # Format pattern to get release date 2025
+        self.format_pattern = "%Y"
 
     def search(self, game_name: str, max_n: int = 1) -> list[HLTBType]:
         """
@@ -22,11 +26,11 @@ class HLTB:
         hltb_results = []
         for result in sorted_results:
             hltb_obj = HLTBType(
-                game_name=result.game_name,
+                name=result.game_name,
                 game_type=result.game_type,
-                review_score=result.review_score,
-                profile_platforms=result.profile_platforms,
-                release_world=result.release_world,
+                hltb_rating=float(result.review_score) / 100. if result.review_score else 0.0,
+                platforms=result.profile_platforms,
+                release=datetime.strptime(f'{result.release_world}', self.format_pattern).strftime("%Y-%m-%d"),
                 main_story=result.main_story,
                 main_extra=result.main_extra,
                 completionist=result.completionist,

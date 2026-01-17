@@ -11,6 +11,9 @@ class IGDB:
         self.client_id = os.getenv("IGDB_CLIENT_ID")
         self.client_secret = os.getenv("IGDB_CLIENT_SECRET")
         self.access_token = None
+        
+        # Format pattern to get release date 2025-04-24 00:00:00+00:00
+        self.format_pattern = "%Y-%m-%d %H:%M:%S+00:00"
 
     def _get_access_token(self):
         """
@@ -72,11 +75,11 @@ class IGDB:
                 platforms=[g["name"] for g in game.get("platforms", [])],
                 player_perspectives=[g["name"] for g in game.get("player_perspectives", [])],
                 themes=[g["name"] for g in game.get("themes", [])],
-                rating=game.get("rating"),
-                first_release_date=datetime.datetime.fromtimestamp(int(game.get("first_release_date", "0")), datetime.timezone.utc),
+                igdb_rating=float(game.get("rating")) / 100. if game.get("rating") else 0.0,
+                release=datetime.datetime.fromtimestamp(int(game.get("first_release_date", "0")), datetime.timezone.utc).strftime("%Y-%m-%d"),
                 genres=[g["name"] for g in game.get("genres", [])],
-                cover_url=game.get("cover", {}).get("url"),
-                summary=game.get("summary"),
+                cover_url=[game.get("cover", {}).get("url")],
+                description=game.get("summary"),
             )
             igdb_results.append(igdb_obj)
 

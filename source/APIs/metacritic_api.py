@@ -10,6 +10,13 @@ class Metacritic:
         load_dotenv()
         self.api_key = os.getenv("METACRITIC_API_KEY")
 
+    def _score_ratio(self, score_obj: dict):
+        score = score_obj.get("score", 0)
+        num = 0 if score is None else score
+        max = score_obj.get("max", 1)
+        den = 1 if max is None else max
+        return float(num) / float(den)
+
     def search(self, game_name: str, max_n: int = 1) -> list[MetacriticType]:
         """
         Searches for games by name and retrieves details.
@@ -43,20 +50,19 @@ class Metacritic:
                     continue
 
                 metadata = game_data["components"][0]["data"]["item"]
-                critics_score = game_data["components"][6]["data"]["item"]
-                user_score = game_data["components"][8]["data"]["item"]
+                critics_score = self._score_ratio(game_data["components"][6]["data"]["item"])
+                user_score = self._score_ratio(game_data["components"][8]["data"]["item"])
 
                 metacritic_obj = MetacriticType(
                     name=metadata.get("title"),
-                    release_date=metadata.get("releaseDate", ""),
+                    release=metadata.get("releaseDate", ""),
                     developers=[company["name"] for company in metadata.get("production", {}).get("companies", []) if company["typeName"] == "Developer"],
                     publishers=[company["name"] for company in metadata.get("production", {}).get("companies", []) if company["typeName"] == "Publisher"],
                     genres=[genre["name"] for genre in metadata.get("genres", [])],
                     platforms=[platform["name"] for platform in metadata.get("platforms", [])],
-                    critic_score=critics_score.get("score", 0) / critics_score.get("max", 1),
-                    user_score=user_score.get("score", 0) / user_score.get("max", 1),
+                    metacritic_rating=critics_score,
+                    user_rating=user_score,
                 )
-                print(f"ratio: {name_ratio} name: {metacritic_obj.name}")
                 metacritic_results.append((metacritic_obj, name_ratio))
 
         # Sort by ratio of the name
