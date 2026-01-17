@@ -20,6 +20,7 @@ from APIs.api_types import (
 import pandas as pd
 from thefuzz import fuzz
 from datetime import datetime
+from time import sleep
 
 
 def nameRatio(name1: str, name2: str) -> bool:
@@ -28,6 +29,8 @@ def nameRatio(name1: str, name2: str) -> bool:
 
 def compareRelease(date1_s: str, date2_s: str) -> bool:
     format_pattern = "%Y-%m-%d"
+    if date1_s is None or date2_s is None:
+        return False
     if len(date1_s) == 0 or len(date2_s) == 0:
         return False
     date1 = datetime.strptime(date1_s, format_pattern)
@@ -37,21 +40,21 @@ def compareRelease(date1_s: str, date2_s: str) -> bool:
 
 def getFirstString(str_list: list) -> str:
     for s in str_list:
-        if len(s) > 0:
+        if s is not None and len(s) > 0:
             return s
     return ""
 
 
 def getFirstFloat(float_list: list) -> float:
     for f in float_list:
-        if f > 0.0:
+        if f is not None and f > 0.0:
             return f
     return 0.0
 
 
 def getFirstList(list_of_list: list) -> list:
     for l in list_of_list:
-        if len(l) > 0:
+        if l is not None and len(l) > 0:
             return l
     return []
 
@@ -59,7 +62,8 @@ def getFirstList(list_of_list: list) -> list:
 def getUnion(list_of_list: list) -> list:
     result = []
     for l in list_of_list:
-        result += l
+        if l is not None:
+            result += l
     return result
 
 
@@ -104,13 +108,18 @@ if __name__ == "__main__":
     # Parameters
     goodRatio = 0.9
     minRatio = 0.65
+    maxRetries = 3
+    retryN = 0
+    # Debug
     debug = False
     maxGames = 2
 
     # Load gamespot reviews
     df_reviews = pd.read_csv("./data/reviews.csv")
     unique_games = df_reviews["game_name"].unique()
-    for gi, game_name in enumerate(unique_games):
+    gi = 0
+    while gi < len(unique_games):
+        game_name = unique_games[gi]
         try:
             # Query and get the first result
             # Gamespot
@@ -163,6 +172,8 @@ if __name__ == "__main__":
                 keywords=getUnion([game.keywords for game in [game_rawg, game_igdb]] + [game_igdb.themes] + [game_igdb.game_modes] + [game_igdb.player_perspectives] + [[game_rawg.esrb_rating]] + [game_gamespot.themes]),
             )
             game_list.append(game_obj)
+            gi += 1
+            retryN = 0
 
             # Debug
             if debug:
@@ -195,6 +206,13 @@ if __name__ == "__main__":
             traceback.print_exc()
             print(50 * "-")
             print(50 * "*")
+            # Wait
+            sleep(3)
+            # Continue if maxRetries reached
+            retryN += 1
+            if retryN >= maxRetries:
+                gi += 1
+                retryN = 0
 
     # Save results to CSV with append mode
     df_games = pd.DataFrame(game_list)
