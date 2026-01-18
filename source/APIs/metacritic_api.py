@@ -3,6 +3,7 @@ import os
 import requests
 from APIs.api_types import MetacriticType
 from difflib import SequenceMatcher
+from urllib.parse import quote
 
 
 class Metacritic:
@@ -23,7 +24,7 @@ class Metacritic:
         Returns a list of MetacriticType objects.
         """
         # Find name of the game in the Metacritic API
-        find_url = f"https://backend.metacritic.com/finder/metacritic/search/{game_name}/web?apiKey={self.api_key}&limit={max_n+5}&offset=0"
+        find_url = f"https://backend.metacritic.com/finder/metacritic/search/{quote(game_name)}/web?apiKey={self.api_key}&limit={max_n+5}&offset=0"
         find_response = requests.get(find_url)
         find_response.raise_for_status()
         find_data = find_response.json()
@@ -46,7 +47,13 @@ class Metacritic:
                 game_response.raise_for_status()
                 game_data = game_response.json()
 
-                if not "components" in game_data:
+                if not "components" in game_data or len(game_data["components"]) < 8:
+                    continue
+                if not "data" in game_data["components"][0]:
+                    continue
+                if not "data" in game_data["components"][6]:
+                    continue
+                if not "data" in game_data["components"][8]:
                     continue
 
                 metadata = game_data["components"][0]["data"]["item"]

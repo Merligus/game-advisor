@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 import os
 import requests
 from APIs.api_types import RAWGType
+from urllib.parse import quote_plus
 
 
 class RAWG:
@@ -14,7 +15,7 @@ class RAWG:
         Searches for games by name and retrieves details.
         Returns a list of RAWGType objects.
         """
-        search_url = f"https://api.rawg.io/api/games?search={game_name}&key={self.api_key}"
+        search_url = f"https://api.rawg.io/api/games?search={quote_plus(game_name)}&key={self.api_key}"
 
         response = requests.get(search_url)
         response.raise_for_status()
@@ -39,7 +40,7 @@ class RAWG:
                 name=game_data.get("name"),
                 release=game_data.get("released"),
                 rawg_rating=float(game_data.get("rating")) / 5.0 if game_data.get("rating") else 0.0,
-                metacritic_rating=(float(game_data.get("metacritic")) / 100. if game_data.get("metacritic") else 0.0),
+                metacritic_rating=(float(game_data.get("metacritic")) / 100.0 if game_data.get("metacritic") else 0.0),
                 main_story=game_data.get("playtime"),
                 platforms=[p.get("platform", {}).get("name") for p in game_data.get("platforms", []) if p.get("platform") is not None],
                 genres=[g.get("name") for g in game_data.get("genres", [])],

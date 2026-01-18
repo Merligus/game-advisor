@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import traceback
+import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -110,10 +111,14 @@ if __name__ == "__main__":
     minRatio = 0.65
     maxRetries = 3
     retryN = 0
+    savedGames = 0
     saveEveryNGames = 10
+    filename = "./data/games.csv"
     # Rate limit handling
     baseDelay = 1  # seconds between API calls
     rateLimitBackoff = 60  # seconds to wait on rate limit
+    rateLimitRetries = 0
+    maxRateLimitRetries = 3
     # Debug
     debug = False
     maxGames = 2
@@ -122,7 +127,17 @@ if __name__ == "__main__":
     df_reviews = pd.read_csv("./data/reviews.csv")
     unique_games = [f"{game_name}" for game_name in df_reviews["game_name"].unique()]
     unique_games.sort()
+    # Start from the start if the table is empty yet
     gi = 0
+
+    # Check if file exists and read the get the last game saved
+    if os.path.exists(f"{filename}"):
+        # Read it
+        df_games = pd.read_csv(filename)
+        last_game = df_games["name"].iloc[-1]
+        gi = unique_games.index(last_game) + 1
+        del df_games
+
     while gi < len(unique_games):
         game_name = unique_games[gi]
         try:
@@ -182,15 +197,25 @@ if __name__ == "__main__":
                 keywords=getUnion([game.keywords for game in [game_rawg, game_igdb]] + [game_igdb.themes] + [game_igdb.game_modes] + [game_igdb.player_perspectives] + [[game_rawg.esrb_rating]] + [game_gamespot.themes]),
             )
             game_list.append(game_obj)
+            savedGames += 1
             gi += 1
             retryN = 0
+            rateLimitRetries = 0
 
             # Save every N games to not lose
-            if gi % saveEveryNGames == 0:
-                # Save results to CSV with append mode
-                df_games = pd.DataFrame(game_list)
-                df_games.to_csv("./data/games.csv", index=False)
-                print(f"Saved {len(df_games)} games to ./data/games.csv")
+            if savedGames % saveEveryNGames == 0:
+                # Check if file exists and append
+                if os.path.exists(filename):
+                    # Append to existing file without loading all data into memory
+                    df_games = pd.DataFrame(game_list[-saveEveryNGames:])
+                    df_games.to_csv(filename, mode="a", header=False, index=False)
+                    print(f"Appended {len(df_games)} games to {filename}")
+                    del df_games
+                else:
+                    df_games = pd.DataFrame(game_list)
+                    df_games.to_csv(filename, index=False)
+                    print(f"Saved {len(df_games)} games to {filename}")
+                    del df_games
 
             # Debug
             if debug:
@@ -223,10 +248,16 @@ if __name__ == "__main__":
 
             print(50 * "*")
             print(50 * "-")
-            if is_rate_limit:
-                print(f"RATE LIMIT EXCEEDED - Waiting {rateLimitBackoff} seconds...")
-                sleep(rateLimitBackoff)
             traceback.print_exc()
+            if is_rate_limit:
+                rateLimitRetries += 1
+                print(f"RATE LIMIT EXCEEDED {rateLimitRetries}x - Waiting {rateLimitBackoff} seconds...")
+                sleep(rateLimitBackoff)
+                
+                # Stop the script if max rate limit retries exceeded
+                if rateLimitRetries >= maxRateLimitRetries:
+                    print(f"Stopping due to exceeded rate limit retries {rateLimitRetries}/{maxRateLimitRetries}")
+                    exit()
             print(50 * "-")
             print(50 * "*")
 

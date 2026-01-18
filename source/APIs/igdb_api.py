@@ -3,6 +3,7 @@ import requests
 from dotenv import load_dotenv
 from APIs.api_types import IGDBType
 import datetime
+from urllib.parse import quote
 
 
 class IGDB:
@@ -52,7 +53,7 @@ class IGDB:
 
         body = f"""
             fields name, game_modes.name, game_type.type, keywords.name, language_supports.language.name, platforms.name, player_perspectives.name, themes.name, rating, summary, first_release_date, genres.name, cover.url;
-            search "{game_name}";
+            search "{quote(game_name)}";
             limit {max_n};
         """
 

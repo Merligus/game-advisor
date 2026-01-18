@@ -4,13 +4,14 @@ import os
 import xml.etree.ElementTree as ET
 from APIs.api_types import GamespotType
 from datetime import datetime
+from urllib.parse import quote_plus
 
 
 class Gamespot:
     def __init__(self):
         load_dotenv()
         self.api_key = os.getenv("GAMESPOT_API_KEY")
-        
+
         # Format pattern to get release date 2025-04-24 12:00:00
         self.format_pattern = "%Y-%m-%d %H:%M:%S"
 
@@ -19,7 +20,7 @@ class Gamespot:
         Searches for games by name and retrieves details.
         Returns a list of GamespotType objects.
         """
-        search_url = f"https://www.gamespot.com/api/games/?limit={max_n}&filter=name:{game_name}&api_key={self.api_key}"
+        search_url = f"https://www.gamespot.com/api/games/?limit={max_n}&filter=name:{quote_plus(game_name)}&api_key={self.api_key}"
 
         # Set headers for the request
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
