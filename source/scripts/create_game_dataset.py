@@ -134,8 +134,24 @@ if __name__ == "__main__":
     if os.path.exists(f"{filename}"):
         # Read it
         df_games = pd.read_csv(filename)
-        last_game = df_games["name"].iloc[-1]
-        gi = unique_games.index(last_game) + 1
+        # Look for the last name that is not empty in the table already generated
+        i = -1
+        while True:
+            last_game = df_games["name"].iloc[i]
+            if len(last_game) > 0:
+                break
+            i -= 1
+        # Need to look for the best match of last_game in unique_games since it is not guaranteed that the name is on the list
+        # gi = unique_games.index(last_game) + 1
+        max_name_ratio = 0.0
+        max_index = 0
+        for index, game_name in enumerate(unique_games):
+            current_name_ratio = nameRatio(last_game, game_name)
+            if current_name_ratio > max_name_ratio:
+                max_name_ratio = current_name_ratio
+                max_index = index
+        gi = max_index + 1
+        print(f"Starting from {gi}, actually {100 * gi/len(unique_games):.2f}% of {len(unique_games)} games")
         del df_games
 
     while gi < len(unique_games):
@@ -253,7 +269,7 @@ if __name__ == "__main__":
                 rateLimitRetries += 1
                 print(f"RATE LIMIT EXCEEDED {rateLimitRetries}x - Waiting {rateLimitBackoff} seconds...")
                 sleep(rateLimitBackoff)
-                
+
                 # Stop the script if max rate limit retries exceeded
                 if rateLimitRetries >= maxRateLimitRetries:
                     print(f"Stopping due to exceeded rate limit retries {rateLimitRetries}/{maxRateLimitRetries}")
