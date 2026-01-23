@@ -138,7 +138,7 @@ if __name__ == "__main__":
         i = -1
         while True:
             last_game = df_games["name"].iloc[i]
-            if len(last_game) > 0:
+            if type(last_game) is str and len(last_game) > 0:
                 break
             i -= 1
         # Need to look for the best match of last_game in unique_games since it is not guaranteed that the name is on the list
