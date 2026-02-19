@@ -285,7 +285,8 @@ if __name__ == "__main__":
                 gi += 1
                 retryN = 0
 
-    # Save results to CSV with append mode
-    df_games = pd.DataFrame(game_list)
-    df_games.to_csv("./data/games.csv", index=False)
-    print(f"Saved {len(df_games)} games to ./data/games.csv")
+    # Append to existing file without loading all data into memory
+    if savedGames % saveEveryNGames <= len(game_list):
+        df_games = pd.DataFrame(game_list[-(savedGames % saveEveryNGames):])
+        df_games.to_csv(filename, mode="a", header=False, index=False)
+        print(f"Appended {len(df_games)} games to {filename}")
