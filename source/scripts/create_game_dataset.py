@@ -273,7 +273,7 @@ if __name__ == "__main__":
                 # Stop the script if max rate limit retries exceeded
                 if rateLimitRetries >= maxRateLimitRetries:
                     print(f"Stopping due to exceeded rate limit retries {rateLimitRetries}/{maxRateLimitRetries}")
-                    exit()
+                    break
             print(50 * "-")
             print(50 * "*")
 
@@ -285,8 +285,8 @@ if __name__ == "__main__":
                 gi += 1
                 retryN = 0
 
-    # Append to existing file without loading all data into memory
-    if savedGames % saveEveryNGames <= len(game_list):
+    # Append to existing file
+    if savedGames % saveEveryNGames > 0:
         df_games = pd.DataFrame(game_list[-(savedGames % saveEveryNGames):])
         df_games.to_csv(filename, mode="a", header=False, index=False)
         print(f"Appended {len(df_games)} games to {filename}")
