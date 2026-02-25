@@ -162,13 +162,20 @@ if __name__ == "__main__":
                 # Find best match
                 max_name_ratio = 0.0
                 max_index = 0
+                countdown_iter = 0
                 for index, game_name in enumerate(unique_games):
                     current_name_ratio = nameRatio(game, game_name)
+                    countdown_iter += 1
                     if current_name_ratio > max_name_ratio:
+                        countdown_iter = 0
                         max_name_ratio = current_name_ratio
                         max_index = index
+                    if max_name_ratio > 0.95 and countdown_iter >= 5:
+                        break
+                
                 # Remove game from unique_games
                 popped_game = unique_games.pop(max_index)
+                print(f"{popped_game} = {game}, new length={len(unique_games)}")
             gi = 0
         del df_games
 
