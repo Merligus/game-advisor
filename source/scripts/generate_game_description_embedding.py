@@ -8,11 +8,11 @@ df = pd.read_csv("./data/games.csv")
 df_desc = df[["name", "description"]].dropna()
 
 # Generate embeddings for each description
-model = SentenceTransformer("all-mpnet-base-v2", device="cpu")
+model = SentenceTransformer("all-mpnet-base-v2", device="cuda")
 game_desc_dict = {}
 for index, row in tqdm(df_desc.iterrows(), total=len(df_desc), desc="Encoding descriptions"):
     game_desc_dict[row["name"]] = model.encode(row["description"])
-    
+
 # Save to test similar games
 with open("./data/game_descriptions_embeddings.pkl", "wb") as f:
     pickle.dump(game_desc_dict, f)
