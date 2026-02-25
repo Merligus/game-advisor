@@ -151,7 +151,25 @@ if __name__ == "__main__":
                 max_name_ratio = current_name_ratio
                 max_index = index
         gi = max_index + 1
-        print(f"Starting from {gi}, actually {100 * gi/len(unique_games):.2f}% of {len(unique_games)} games")
+        
+        # The game table still needs to finish loading
+        if gi < len(unique_games):
+            print(f"Starting from {gi}, actually {100 * gi/len(unique_games):.2f}% of {len(unique_games)} games")
+        # The game table is finished, now we need to look for games we didn't save in the first try
+        else:
+            # Delete all games in unique_games that are in the games.csv
+            for game in df_games["name"]:
+                # Find best match
+                max_name_ratio = 0.0
+                max_index = 0
+                for index, game_name in enumerate(unique_games):
+                    current_name_ratio = nameRatio(game, game_name)
+                    if current_name_ratio > max_name_ratio:
+                        max_name_ratio = current_name_ratio
+                        max_index = index
+                # Remove game from unique_games
+                popped_game = unique_games.pop(max_index)
+            gi = 0
         del df_games
 
     while gi < len(unique_games):
