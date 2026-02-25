@@ -110,11 +110,13 @@ duvidas:
         - ele achou que o user_playtime estaria no banco tb, por isso se confundiu. se tiver, acho melhor atualizar o reward system, se n é só usar o rbase mesmo baseado no rating de 0 a 10
 
 updates:
-    - criei os modulos de APIs pra pegar o metadata de qualquer jogo
-    - preciso pegar a lista de todos os jogos da tabela user/game/review e montar a tabela de game com o metadata
-    - vou pegar reviews do metacritic pra ter uma tabela melhor de user/game/review
-    - com a tabela feita, preciso juntar a tabela do metacritic e do gamespot e pegar todos os citados e a partir desses jogos pegar todos os metadatas e construir uma nova tabela de jogos
-    - juntei a tabela de reviews do metacritic e do gamespot. ela se chama reviews
-    - implementar collaborative embedding e depois testa-lo procurando jogos parecidos
+    + criei os modulos de APIs pra pegar o metadata de qualquer jogo
+    + preciso pegar a lista de todos os jogos da tabela user/game/review e montar a tabela de game com o metadata
+    + vou pegar reviews do metacritic pra ter uma tabela melhor de user/game/review
+    + com a tabela feita, preciso juntar a tabela do metacritic e do gamespot e pegar todos os citados e a partir desses jogos pegar todos os metadatas e construir uma nova tabela de jogos
+    + juntei a tabela de reviews do metacritic e do gamespot. ela se chama reviews
+    + implementar collaborative embedding e depois testa-lo procurando jogos parecidos
+    + implementar description embedding e depois testa-lo procurando jogos parecidos
+    - atualizar tabela games.csv com jogos que não estão la porq ta faltando muitos jogos entre D - K.
     - gerar tabela de games components (word2vec, descrição, keywords, genres, collaborative embedding)
     

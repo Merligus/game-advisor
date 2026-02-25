@@ -57,3 +57,13 @@ python source/scripts/generate_collaborative_embeding.py
 ```
 
 After that, you can test using the source/scripts/test_collaborative_embedding.ipynb notebook.
+
+### Game Description Embedding
+
+After generating the review collaborative embeddings, the game description text embeddings were generated with:
+
+```bash
+python source/scripts/generate_game_description_embedding.py
+```
+
+This way we can compare two games by their description. The tests were made source/scripts/test_collaborative_embedding.ipynb notebook and they made sense.
