@@ -38,12 +38,13 @@ sistema:
             - titulo, 128 (usando item2vec)
             - descrição do jogo/palavras chave, 128 (embedding gerado por word2vec)
             - genero, 20 (usando multi hot encoding)
+            - nota dos criticos, 1 (usando min max scaling de 0-1)
+            - nota do publico, 1 (usando min max scaling de 0-1)
+            - Collaborative Embedding, 32 (usando svd, Surprise (Python Library) ou sklearn, pra embedar baseado nas reviews dos usuarios, aka Video Game Reviews and Ratings Dataset)
+        - filtro final do usuario
             - ano de lançamento, 1 (min max scaling?)
             - plataforma, 10 (usando one hot encoding)
             - time to beat, 3 (main, extra, 100%) (normalizar usando tanh np.tanh(df['time_to_beat'] / 50.0))
-            - nota dos criticos, 1 (usando min max scaling de 0-1)
-            - nota do usuário, 1 (fazendo uma media e depois usando min max scaling de 0-1)
-            - Collaborative Embedding, 32 (usando svd, Surprise (Python Library) ou sklearn, pra embedar baseado nas reviews dos usuarios, aka Video Game Reviews and Ratings Dataset)
         - depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
         - o banco vai ter a seguinte estrutura
             - observations: array 2D (NxM), onde cada linha representa o estado de um usuario. 
@@ -112,3 +113,8 @@ updates:
     - criei os modulos de APIs pra pegar o metadata de qualquer jogo
     - preciso pegar a lista de todos os jogos da tabela user/game/review e montar a tabela de game com o metadata
     - vou pegar reviews do metacritic pra ter uma tabela melhor de user/game/review
+    - com a tabela feita, preciso juntar a tabela do metacritic e do gamespot e pegar todos os citados e a partir desses jogos pegar todos os metadatas e construir uma nova tabela de jogos
+    - juntei a tabela de reviews do metacritic e do gamespot. ela se chama reviews
+    - implementar collaborative embedding e depois testa-lo procurando jogos parecidos
+    - gerar tabela de games components (word2vec, descrição, keywords, genres, collaborative embedding)
+    
