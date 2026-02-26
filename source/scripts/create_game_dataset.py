@@ -134,49 +134,32 @@ if __name__ == "__main__":
     if os.path.exists(f"{filename}"):
         # Read it
         df_games = pd.read_csv(filename)
-        # Look for the last name that is not empty in the table already generated
-        i = -1
-        while True:
-            last_game = df_games["name"].iloc[i]
-            if type(last_game) is str and len(last_game) > 0:
-                break
-            i -= 1
-        # Need to look for the best match of last_game in unique_games since it is not guaranteed that the name is on the list
-        # gi = unique_games.index(last_game) + 1
-        max_name_ratio = 0.0
-        max_index = 0
-        for index, game_name in enumerate(unique_games):
-            current_name_ratio = nameRatio(last_game, game_name)
-            if current_name_ratio > max_name_ratio:
-                max_name_ratio = current_name_ratio
-                max_index = index
-        gi = max_index + 1
+        
+        # Delete all games in unique_games that are in the games.csv
+        ratio_threshold = 0.98
+        for game in df_games["name"]:
+            # Find best match
+            max_name_ratio = 0.0
+            max_index = 0
+            countdown_iter = 0
+            for index, game_name in enumerate(unique_games):
+                current_name_ratio = nameRatio(game, game_name)
+                countdown_iter += 1
+                if current_name_ratio > max_name_ratio:
+                    countdown_iter = 0
+                    max_name_ratio = current_name_ratio
+                    max_index = index
+                if max_name_ratio > ratio_threshold and countdown_iter >= 5:
+                    break
+            
+            # Remove game from unique_games
+            if (max_index < len(unique_games)) and max_name_ratio > ratio_threshold:
+                popped_game = unique_games.pop(max_index)
+                if str(popped_game).strip() != str(game).strip():
+                    print(f"{popped_game} = {game}, {max_name_ratio:.2f} ratio, new length={len(unique_games)}")
         
         # The game table still needs to finish loading
-        if gi < len(unique_games):
-            print(f"Starting from {gi}, actually {100 * gi/len(unique_games):.2f}% of {len(unique_games)} games")
-        # The game table is finished, now we need to look for games we didn't save in the first try
-        else:
-            # Delete all games in unique_games that are in the games.csv
-            for game in df_games["name"]:
-                # Find best match
-                max_name_ratio = 0.0
-                max_index = 0
-                countdown_iter = 0
-                for index, game_name in enumerate(unique_games):
-                    current_name_ratio = nameRatio(game, game_name)
-                    countdown_iter += 1
-                    if current_name_ratio > max_name_ratio:
-                        countdown_iter = 0
-                        max_name_ratio = current_name_ratio
-                        max_index = index
-                    if max_name_ratio > 0.95 and countdown_iter >= 5:
-                        break
-                
-                # Remove game from unique_games
-                popped_game = unique_games.pop(max_index)
-                print(f"{popped_game} = {game}, new length={len(unique_games)}")
-            gi = 0
+        print(f"Starting from {gi}, {len(unique_games)} remaining games")
         del df_games
 
     while gi < len(unique_games):
