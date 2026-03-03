@@ -208,8 +208,6 @@ if __name__ == "__main__":
                 keywords=getUnion([game.keywords for game in [game_rawg, game_igdb]] + [game_igdb.themes] + [game_igdb.game_modes] + [game_igdb.player_perspectives] + [[game_rawg.esrb_rating]] + [game_gamespot.themes]),
             )
             gi += 1
-            if len(game_obj.name) == 0:
-                continue
             game_list.append(game_obj)
             savedGames += 1
             retryN = 0
