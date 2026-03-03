@@ -4,7 +4,7 @@ from typing import List
 
 @dataclass
 class GameType:
-    id: int = 0
+    real_name: str = ""
     name: str = ""
     release: str = ""
     rawg_rating: float = 0.0

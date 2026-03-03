@@ -46,7 +46,6 @@ class Gamespot:
         # Extract reviews from this page
         for game in root.findall(".//game"):
             gamespot_obj = GamespotType(
-                id=int(game.findtext("id", 0)),
                 name=game.findtext("name"),
                 themes=[theme.findtext("name") for theme in game.findall("theme")],
                 release=datetime.strptime(game.findtext("release_date"), self.format_pattern).strftime("%Y-%m-%d"),

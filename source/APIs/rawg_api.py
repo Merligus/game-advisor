@@ -36,7 +36,6 @@ class RAWG:
             game_data = details_response.json()
 
             rawg_obj = RAWGType(
-                id=game_data.get("id"),
                 name=game_data.get("name"),
                 release=game_data.get("released"),
                 rawg_rating=float(game_data.get("rating")) / 5.0 if game_data.get("rating") else 0.0,

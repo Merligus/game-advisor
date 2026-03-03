@@ -22,6 +22,7 @@ import pandas as pd
 from thefuzz import fuzz
 from datetime import datetime
 from time import sleep
+from tqdm import tqdm
 
 
 def nameRatio(name1: str, name2: str) -> bool:
@@ -74,7 +75,6 @@ def showResults(api: str, results: GameType, game_name: str, game_release: str, 
     print(f"\t-- {api} {len(results)}")
     game = results[0] if len(results) > 0 else GameType()
     print(f"\t\t{nameRatio(game.name, game_name)} {compareRelease(game.release, game_release)}")
-    print(f"\t\tid: {game.id}")
     print(f"\t\tname: {game.name}")
     print(f"\t\trelease: {game.release}")
     print(f"\t\trawg_rating: {game.rawg_rating}")
@@ -127,6 +127,8 @@ if __name__ == "__main__":
     df_reviews = pd.read_csv("./data/reviews.csv")
     unique_games = [f"{game_name}" for game_name in df_reviews["game_name"].unique()]
     unique_games.sort()
+    already_processed = set()
+
     # Start from the start if the table is empty yet
     gi = 0
 
@@ -135,35 +137,20 @@ if __name__ == "__main__":
         # Read it
         df_games = pd.read_csv(filename)
         
-        # Delete all games in unique_games that are in the games.csv
-        ratio_threshold = 0.98
-        for game in df_games["name"]:
-            # Find best match
-            max_name_ratio = 0.0
-            max_index = 0
-            countdown_iter = 0
-            for index, game_name in enumerate(unique_games):
-                current_name_ratio = nameRatio(game, game_name)
-                countdown_iter += 1
-                if current_name_ratio > max_name_ratio:
-                    countdown_iter = 0
-                    max_name_ratio = current_name_ratio
-                    max_index = index
-                if max_name_ratio > ratio_threshold and countdown_iter >= 5:
-                    break
-            
-            # Remove game from unique_games
-            if (max_index < len(unique_games)) and max_name_ratio > ratio_threshold:
-                popped_game = unique_games.pop(max_index)
-                if str(popped_game).strip() != str(game).strip():
-                    print(f"{popped_game} = {game}, {max_name_ratio:.2f} ratio, new length={len(unique_games)}")
+        # Add all games processed to the already_processed set
+        for game in tqdm(df_games["real_name"], desc="Getting all games processed"):
+            # Add game to the set of processed games
+            already_processed.add(game)
         
         # The game table still needs to finish loading
-        print(f"Starting from {gi}, {len(unique_games)} remaining games")
+        print(f"Starting from {gi}, {len(unique_games) - len(already_processed)} remaining games")
         del df_games
 
     while gi < len(unique_games):
         game_name = unique_games[gi]
+        if game_name in already_processed:
+            gi += 1
+            continue
         try:
             # Query and get the first result
             # Gamespot
@@ -200,7 +187,7 @@ if __name__ == "__main__":
             showResults("Metacritic", results_metacritic, game_name, game_release, debug)
 
             game_obj = GameType(
-                id=gi,
+                real_name=game_name,
                 name=getFirstString([game.name for game in [game_gamespot, game_rawg, game_igdb, game_hltb, game_metacritic]]),
                 release=game_release,
                 rawg_rating=game_rawg.rawg_rating,
@@ -220,13 +207,15 @@ if __name__ == "__main__":
                 genres=getUnion([game.genres for game in [game_rawg, game_igdb, game_gamespot, game_metacritic]]),
                 keywords=getUnion([game.keywords for game in [game_rawg, game_igdb]] + [game_igdb.themes] + [game_igdb.game_modes] + [game_igdb.player_perspectives] + [[game_rawg.esrb_rating]] + [game_gamespot.themes]),
             )
+            gi += 1
+            if len(game_obj.name) == 0:
+                continue
             game_list.append(game_obj)
             savedGames += 1
-            gi += 1
             retryN = 0
             rateLimitRetries = 0
 
-            # Save every N games to not lose
+            # Save every N games to not lose progress
             if savedGames % saveEveryNGames == 0:
                 # Check if file exists and append
                 if os.path.exists(filename):
@@ -243,7 +232,6 @@ if __name__ == "__main__":
 
             # Debug
             if debug:
-                print(f"\tid: {game_obj.id}")
                 print(f"\tname: {game_obj.name}")
                 print(f"\trelease: {game_obj.release}")
                 print(f"\trawg_rating: {game_obj.rawg_rating}")

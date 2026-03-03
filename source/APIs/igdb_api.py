@@ -67,7 +67,6 @@ class IGDB:
 
         for game in results:
             igdb_obj = IGDBType(
-                id=game.get("id"),
                 name=game.get("name"),
                 game_modes=[g["name"] for g in game.get("game_modes", [])],
                 game_type=game.get("game_type", {}).get("type"),
