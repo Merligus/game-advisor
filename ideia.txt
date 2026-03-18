@@ -117,6 +117,11 @@ updates:
     + juntei a tabela de reviews do metacritic e do gamespot. ela se chama reviews
     + implementar collaborative embedding e depois testa-lo procurando jogos parecidos
     + implementar description embedding e depois testa-lo procurando jogos parecidos
-    - atualizar tabela games.csv com jogos que não estão la porq ta faltando muitos jogos entre D - K.
+    + atualizar tabela games.csv com jogos que não estão la porq ta faltando muitos jogos entre D - K.
+    + dropar titulos vazios e repetidos. dropar a coluna index tambem e salvar o nome do jogo na query
+        + filtrar tabela games e tirar titulos vazios e repetidos
+        + gerar uma nova tabela sem a coluna e index e com uma nova coluna que diz o nome do jogo que foi procurado
+        + continuar a atualização dessa nova tabela com um novo script que não repete a procura de jogos que já estao na tabela (sem aquele for)
     - gerar tabela de games components (word2vec, descrição, keywords, genres, collaborative embedding)
+    - atualizar README em todo passo
     
