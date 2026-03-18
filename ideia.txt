@@ -122,6 +122,7 @@ updates:
         + filtrar tabela games e tirar titulos vazios e repetidos
         + gerar uma nova tabela sem a coluna e index e com uma nova coluna que diz o nome do jogo que foi procurado
         + continuar a atualização dessa nova tabela com um novo script que não repete a procura de jogos que já estao na tabela (sem aquele for)
+    - gerar embeddings de keywords + genres
     - gerar tabela de games components (word2vec, descrição, keywords, genres, collaborative embedding)
     - atualizar README em todo passo
     
