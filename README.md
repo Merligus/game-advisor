@@ -77,3 +77,14 @@ python source/scripts/generate_game_title_embedding.py
 This way we can compare two games by their title.
 
 After that, you can test all embeddings using the source/scripts/test_embeddings.ipynb notebook.
+
+### Game Tags Embedding (genres + keywords)
+
+Multi-hot encoding of the union of genres and keywords per game,
+reduced to N components via TruncatedSVD. Captures co-occurrence
+patterns between tags. N=32 chosen based on sanity tests in
+test_embeddings.ipynb.
+
+```bash
+python source/scripts/generate_game_tags_embedding.py
+```
