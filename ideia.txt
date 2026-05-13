@@ -135,7 +135,8 @@ updates:
             - Collaborative Embedding
     + testar a nova tabela fazendo queries comparativos
     + depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
-    - treinar offline reinforcement learning
+    - claude --resume ou claude --resume 4ddad364-9b2f-4670-91b9-dee782ec09c0
+    - treinar offline reinforcement learning CQL. instalar d3rlpy + torch
     - testar o treino
     - montar app no hugginface
         - frontend
