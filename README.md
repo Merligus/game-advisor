@@ -110,6 +110,8 @@ python source/scripts/train_cql.py
 
 Saves a TorchScript policy to `data/policy.pt` (input dim 1584, output dim 1584).
 
+Then sanity-check the trained policy by opening `source/scripts/test_cql_policy.ipynb` and eyeballing the top-10 recommendations from a cold-start state plus a handful of user profiles (RPG fan, FPS fan, etc.) before moving on.
+
 ### Run the HuggingFace App
 
 A Gradio app at the repo root wires everything together: cold-start questionnaire → user-defined filters → top-5 game recommendations with IGDB cover art.

@@ -29,6 +29,10 @@ This file captures the path from the current state of the repo to a deployed off
 
 `source/scripts/train_cql.py` instantiates `d3rlpy.algos.CQL(action_scaler="min_max", gamma=0.2, actor_learning_rate=1e-4, critic_learning_rate=3e-4, batch_size=256, use_gpu=<auto>)`. First end-to-end pass: `n_steps=50_000`; bump to `200_000` once the pipeline is green. Holds out the last 10% of each user's reviews for `d3rlpy.ope.FQE`. Saves TorchScript policy to `data/policy.pt` (input dim 1584, output dim 1584) and training scalars to `data/training_log.json`.
 
+### Stage 3.5 — Sanity-check the trained CQL policy (notebook)
+
+`source/scripts/test_cql_policy.ipynb` mirrors the Stage 1.5 pattern but for the trained policy. Loads `data/policy.pt`, `data/game_embeddings_matrix.npy`, and `data/game_embeddings_index.pkl`. Defines two helpers: `build_state(played_games)` (mean of E-vectors over recognized games; zeros for cold-start) and `top_k_recommendations(state, top_n=10)` (runs the policy on `state`, returns top-N games by cosine to the predicted action vector, filtering out already-played). Pre-filled cells exercise distinct profiles — cold start, RPG fan (Witcher 3 + Dark Souls III + Skyrim), FPS fan (DOOM Eternal + Halo Infinite + Titanfall 2), strategy fan (Civ VI + Total War: WARHAMMER), indie fan (Hollow Knight + Celeste + Stardew Valley) — plus an ad-hoc empty cell. **Gate before Stage 4**: advance only when the policy's recommendations diverge appropriately across profiles and its cold-start picks look plausible.
+
 ### Stage 4 — Candidate generator
 
 `source/app/candidate_generator.py::candidates(filters, played_games=None, k=500)` filters `game_embeddings_index.pkl` by year range, platform intersection, and language substring, then optionally reranks by cosine against the played-games mean profile and trims to `k`. Uses `sklearn.metrics.pairwise.cosine_similarity` (already in `requirements.txt`).
@@ -58,7 +62,8 @@ python source/scripts/build_combined_embeddings.py
 # open source/scripts/test_combined_embeddings.ipynb, eyeball top-10s, then continue
 python source/scripts/build_mdp_dataset.py
 python source/scripts/train_cql.py
+# open source/scripts/test_cql_policy.ipynb, eyeball recs across user profiles, then continue
 python app.py   # then open http://localhost:7860
 ```
 
-Per-stage gates: Stage 1 prints `(N, 1584)`; Stage 1.5 user eyeballs top-10 neighbors per query; Stage 2 prints reward histogram + matched terminal count; Stage 3 logs a finite FQE scalar and writes `data/policy.pt`; Stage 6 boots Gradio and renders 5 covers for a smoke-test query.
+Per-stage gates: Stage 1 prints `(N, 1584)`; Stage 1.5 user eyeballs top-10 neighbors per query; Stage 2 prints reward histogram + matched terminal count; Stage 3 logs a finite FQE scalar and writes `data/policy.pt`; Stage 3.5 user eyeballs policy recs across cold-start + 4 user profiles; Stage 6 boots Gradio and renders 5 covers for a smoke-test query.

@@ -125,7 +125,7 @@ updates:
         + gerar uma nova tabela sem a coluna e index e com uma nova coluna que diz o nome do jogo que foi procurado
         + continuar a atualização dessa nova tabela com um novo script que não repete a procura de jogos que já estao na tabela (sem aquele for)
     + gerar embeddings de keywords + genres. generate_game_tags_embedding usa redução da dimensionalidade para arrays criadas usando multi hot encode dos gêneros/keywords. teste de sanidade se saiu bem com N=32 ao invés de 20.
-    - gerar tabela de games components
+    + gerar tabela de games components
         - cada game (N linhas) vai ter as seguintes informações (M colunas)
             - titulo
             - descrição do jogo/palavras chave
@@ -133,9 +133,10 @@ updates:
             - nota dos criticos, 1 (usando min max scaling de 0-1), metacritic_rating
             - nota do publico, 1 (usando min max scaling de 0-1), igdb_rating, rawg_rating, hltb_rating, user_rating
             - Collaborative Embedding
-    - testar a nova tabela fazendo queries comparativos
-    - depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
+    + testar a nova tabela fazendo queries comparativos
+    + depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
     - treinar offline reinforcement learning
+    - testar o treino
     - montar app no hugginface
         - frontend
         - cold start, experiencia inicial pra saber o estado do usuario

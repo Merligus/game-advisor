@@ -46,8 +46,9 @@ All scripts are designed to be invoked **from the project root** — they use re
 9. Sanity-check the combined embedding via `source/scripts/test_combined_embeddings.ipynb` — top-10 cosine neighbors per query game. **Human gate before step 10**; the next stage encodes the embedding contract into a trained policy.
 10. `python source/scripts/build_mdp_dataset.py` — build the continuous-action MDP from `reviews.csv` + the combined embedding; saves `data/mdp_dataset.h5`.
 11. `python source/scripts/train_cql.py` — train `d3rlpy.algos.CQL` (gamma=0.2, action_scaler="min_max"), hold out the last 10% of each user's reviews for FQE, save TorchScript policy to `data/policy.pt` (input/output dim 1584).
+12. Sanity-check the trained policy via `source/scripts/test_cql_policy.ipynb` — top-10 recommendations from a cold-start state plus four user profiles (RPG/FPS/strategy/indie). **Human gate before Stage 4**; the policy's behavior here is what the Gradio app will surface to end users.
 
-See `PLAN.md` for the strategy that introduced steps 8–11 and the HuggingFace deployment that follows.
+See `PLAN.md` for the strategy that introduced steps 8–12 and the HuggingFace deployment that follows.
 
 For the long-running step 4, `source/scripts/call_script_periodically.sh` is a `fish` loop that re-invokes `create_game_dataset.py` every 10 min — it's used because the script is resumable and rate limits force frequent restarts.
 

@@ -4,6 +4,8 @@
 *.env
 *.pkl
 *.npy
+*.npz
+*.json
 
 !gamespot_reviews.csv
 !metacritic_reviews.csv
