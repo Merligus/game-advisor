@@ -3,6 +3,7 @@
 *.pyc
 *.env
 *.pkl
+*.npy
 
 !gamespot_reviews.csv
 !metacritic_reviews.csv
