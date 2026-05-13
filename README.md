@@ -88,3 +88,36 @@ test_embeddings.ipynb.
 ```bash
 python source/scripts/generate_game_tags_embedding.py
 ```
+
+### Combined Embedding Table
+
+Concatenate the four per-game embedding pickles plus eight scaled scalar columns into a single matrix `E` of shape `(N, 1584)`, L2-normalizing each embedding block independently and min-max-scaling the scalars. Outputs `data/game_embeddings_matrix.npy`, `data/game_embeddings_index.pkl` (with the filter columns the app uses), and `data/embedding_scalers.pkl`.
+
+```bash
+python source/scripts/build_combined_embeddings.py
+```
+
+Then sanity-check by opening `source/scripts/test_combined_embeddings.ipynb` and eyeballing the top-10 closest games for a handful of query titles before moving on.
+
+### Train CQL Policy
+
+Build the offline-RL MDP dataset from `data/reviews.csv` + the combined embedding and train a continuous-action CQL policy via `d3rlpy`. State = running average of past action vectors; action = game embedding; reward = `(score - 5) / 5`; terminal = last review per user.
+
+```bash
+python source/scripts/build_mdp_dataset.py
+python source/scripts/train_cql.py
+```
+
+Saves a TorchScript policy to `data/policy.pt` (input dim 1584, output dim 1584).
+
+### Run the HuggingFace App
+
+A Gradio app at the repo root wires everything together: cold-start questionnaire → user-defined filters → top-5 game recommendations with IGDB cover art.
+
+```bash
+python app.py
+```
+
+Open `http://localhost:7860`. To deploy as a HuggingFace Space, push the repo to a Space with `sdk: gradio`; ship the four artifacts in `data/` (`policy.pt`, `game_embeddings_matrix.npy`, `game_embeddings_index.pkl`, `embedding_scalers.pkl`) and put the IGDB credentials in the Space's secrets.
+
+See `PLAN.md` for the full strategy and `ideia.txt` for the long-form design log.

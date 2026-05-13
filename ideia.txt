@@ -34,37 +34,38 @@ sistema:
         - descrição do jogo -> embedding gerado por word2vec
 
         - tabela user x game com os valores sendo o rating precisa ser criada a partir do dataset gerado pela API do gamespot
-        - cada game (N linhas) vai ter as seguintes informações (M colunas)
+        - cada game (G linhas) vai ter as seguintes informações (E colunas)
             - titulo, 128 (usando item2vec)
             - descrição do jogo/palavras chave, 128 (embedding gerado por word2vec)
             - genero + keywords, 32 (multi-hot da união genres ∪ keywords → TruncatedSVD com N=32)
                 - alternativa testada: SentenceTransformer all-mpnet-base-v2 sobre tags concatenadas (dim 768)
-            - nota dos criticos, 1 (usando min max scaling de 0-1)
-            - nota do publico, 1 (usando min max scaling de 0-1)
+            - nota dos criticos, 1 (usando min max scaling de 0-1), metacritic_rating
+            - nota do publico, 1 (usando min max scaling de 0-1), igdb_rating, rawg_rating, hltb_rating, user_rating
             - Collaborative Embedding, 32 (usando svd, Surprise (Python Library) ou sklearn, pra embedar baseado nas reviews dos usuarios, aka Video Game Reviews and Ratings Dataset)
         - filtro final do usuario
-            - ano de lançamento, 1 (min max scaling?)
-            - plataforma, 10 (usando one hot encoding)
-            - time to beat, 3 (main, extra, 100%) (normalizar usando tanh np.tanh(df['time_to_beat'] / 50.0))
+            - ano de lançamento
+            - language_supports
+            - plataforma
+            - time to beat, 3 (main, extra, 100%)
         - depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
         - o banco vai ter a seguinte estrutura
-            - observations: array 2D (NxM), onde cada linha representa o estado de um usuario. 
+            - observations: array 2D (RxE), onde cada linha representa o estado de um usuario. 
                 - embedding do usuario 0 q n jogou nenhum
                 - embedding do usuario 1 q jogou o game A
                 - embedding do usuario 2 q jogou o game B
                 - embedding do usuario 3 q jogou o game A + game B fazendo um average ou usando uma tecnica de merge do embedding do game A com game B
                 - ...
                 - até acabar os reviews dos usuarios no dataset de review por data
-            - actions: array 2D (NxM), onde cada linha representa o embedding do game jogado pelo usuário da mesma linha ni em observations
+            - actions: array 2D (RxE), onde cada linha representa o embedding do game jogado pelo usuário da mesma linha ni em observations
                 - embedding do game A que o usuario 0 jogou
                 - embedding do game B que o usuario 1 jogou
                 - embedding do game A + B que o usuario 2 jogou
                 - embedding do game C que o usuario 3 jogou
-            - rewards: array (Nx1), onde cada linha representa o reward depois do usuario ni, jogar o jogo ni
+            - rewards: array (Rx1), onde cada linha representa o reward depois do usuario ni, jogar o jogo ni
                 - 1 pq o usuario 0 gostou do game A 
                 - -1 pq o usuario 1 n gostou do game B
                 - 0 pq o usuario 2 skipou o game B
-            - terminals: array (Nx1), onde cada linha representa se o usuario nunca mais deu review de nenhum outro jogo 
+            - terminals: array (Rx1), onde cada linha representa se o usuario nunca mais deu review de nenhum outro jogo 
                 - 0 ja que o usuario 0 continuou 
                 - 0 ja que o usuario 1 continuou
                 - 1 ja que o usuario 2 n teve mais nenhuma review depois dessa
@@ -124,6 +125,22 @@ updates:
         + gerar uma nova tabela sem a coluna e index e com uma nova coluna que diz o nome do jogo que foi procurado
         + continuar a atualização dessa nova tabela com um novo script que não repete a procura de jogos que já estao na tabela (sem aquele for)
     + gerar embeddings de keywords + genres. generate_game_tags_embedding usa redução da dimensionalidade para arrays criadas usando multi hot encode dos gêneros/keywords. teste de sanidade se saiu bem com N=32 ao invés de 20.
-    - gerar tabela de games components (word2vec, descrição, keywords, genres, collaborative embedding)
+    - gerar tabela de games components
+        - cada game (N linhas) vai ter as seguintes informações (M colunas)
+            - titulo
+            - descrição do jogo/palavras chave
+            - genero + keywords
+            - nota dos criticos, 1 (usando min max scaling de 0-1), metacritic_rating
+            - nota do publico, 1 (usando min max scaling de 0-1), igdb_rating, rawg_rating, hltb_rating, user_rating
+            - Collaborative Embedding
+    - testar a nova tabela fazendo queries comparativos
+    - depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
+    - treinar offline reinforcement learning
+    - montar app no hugginface
+        - frontend
+        - cold start, experiencia inicial pra saber o estado do usuario
+        - baseado no estado, fazer a inferencia do RL treinado
+        - aplicar filtro do usuario
+
     - atualizar README em todo passo
     
