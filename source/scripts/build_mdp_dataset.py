@@ -11,14 +11,19 @@ embedding index. Per-user running mean is computed vectorized via
 cumsum / arange rather than iterrows for speed.
 
 Outputs (data/):
-  mdp_dataset.npz  observations (N, 1584) float32,
-                   actions      (N, 1584) float32,
-                   rewards      (N,)      float32,
-                   terminals    (N,)      float32
+  mdp_dataset.npz  observations   (N, 1584) float32,
+                   action_row_idx (N,)      int32,
+                   rewards        (N,)      float32,
+                   terminals      (N,)      float32
   mdp_meta.json    {N_transitions, N_users, action_dim, reward stats, ...}
 
-Saved as .npz (not d3rlpy's .h5) so Stage 2 has no d3rlpy dependency;
-Stage 3 (train_cql.py) loads the arrays and constructs d3rlpy.dataset.MDPDataset.
+We store `action_row_idx` (int32 pointers into the embedding matrix)
+rather than materialized action vectors so the .npz stays small
+(~1 GB instead of ~2.6 GB) and stays auto-synced if `E` is ever
+rebuilt. Stage 3 reconstructs actions via `actions = E[action_row_idx]`
+before passing to `d3rlpy.dataset.MDPDataset(...)`.
+
+Saved as .npz (not d3rlpy's .h5) so Stage 2 has no d3rlpy dependency.
 
 Run from project root.
 """
@@ -67,12 +72,13 @@ N = len(df)
 N_users = df["author"].nunique()
 print(f"\nTransitions: N = {N}, users = {N_users}")
 
-# 4. Map game names -> E row indices (vectorized)
-action_row_idx = df["game_name"].map(name_to_row).to_numpy(dtype=np.int64)
+# 4. Map game names -> E row indices (vectorized). int32 is plenty for our
+# ~26K-game catalog and halves the on-disk size of this array.
+action_row_idx = df["game_name"].map(name_to_row).to_numpy(dtype=np.int32)
 
-# 5. Preallocate output arrays
+# 5. Preallocate output arrays (no `actions` matrix — Stage 3 reconstructs
+# it via E[action_row_idx])
 observations = np.zeros((N, ACTION_DIM), dtype=np.float32)
-actions = np.zeros((N, ACTION_DIM), dtype=np.float32)
 rewards = ((df["score"].to_numpy(dtype=np.float32) - 5.0) / 5.0).astype(np.float32)
 terminals = np.zeros(N, dtype=np.float32)
 
@@ -81,12 +87,10 @@ terminals = np.zeros(N, dtype=np.float32)
 # obs[0] within a user = zeros; obs[j] = cumsum(actions[:j]) / j  (for j >= 1)
 print("\nBuilding per-user transitions (vectorized cumulative mean)...")
 group_starts = df.groupby("author", sort=False).indices  # ordered dict-like of arrays
-n_skipped_zero_norm = 0  # diagnostic only; running-mean can't be zero unless first row
 
 for author, idxs in tqdm(group_starts.items(), total=N_users, desc="users"):
     rows = action_row_idx[idxs]
-    user_actions = E[rows]  # (N_user, ACTION_DIM)
-    actions[idxs] = user_actions
+    user_actions = E[rows]  # (N_user, ACTION_DIM) — only needed locally for the running mean
     # observations: shift-right of cumulative mean, with leading zero row
     if len(idxs) > 1:
         cumsum = np.cumsum(user_actions[:-1], axis=0, dtype=np.float32)
@@ -103,7 +107,7 @@ print("\nSaving artifacts (compressed)...")
 np.savez_compressed(
     "./data/mdp_dataset.npz",
     observations=observations,
-    actions=actions,
+    action_row_idx=action_row_idx,
     rewards=rewards,
     terminals=terminals,
 )
@@ -130,10 +134,11 @@ print(f"  ./data/mdp_dataset.npz")
 print(f"  ./data/mdp_meta.json")
 
 print("\nVerification:")
-print(f"  observations.shape = {observations.shape}, dtype={observations.dtype}")
-print(f"  actions.shape      = {actions.shape}, dtype={actions.dtype}")
-print(f"  rewards.shape      = {rewards.shape}, dtype={rewards.dtype}")
-print(f"  terminals.shape    = {terminals.shape}, dtype={terminals.dtype}")
+print(f"  observations.shape   = {observations.shape}, dtype={observations.dtype}")
+print(f"  action_row_idx.shape = {action_row_idx.shape}, dtype={action_row_idx.dtype}")
+print(f"    range: min={action_row_idx.min()}, max={action_row_idx.max()} (E has {E.shape[0]} rows)")
+print(f"  rewards.shape        = {rewards.shape}, dtype={rewards.dtype}")
+print(f"  terminals.shape      = {terminals.shape}, dtype={terminals.dtype}")
 print(f"  reward quantiles  : {meta['reward_quantiles']}")
 print(f"  reward histogram  : {meta['reward_histogram']}")
 print(f"  terminal sum      : {meta['terminal_sum']} (should == N_users {N_users})")

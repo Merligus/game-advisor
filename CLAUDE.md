@@ -44,7 +44,7 @@ All scripts are designed to be invoked **from the project root** — they use re
 7. Sanity-check embeddings via `test_embeddings.ipynb` (cosine top-k) and `test_embeddings_compare.ipynb` (side-by-side of two embedding files).
 8. `python source/scripts/build_combined_embeddings.py` — concatenate the four embedding pickles + scaled scalars into `data/game_embeddings_matrix.npy` (shape `(N, 1584)`), `data/game_embeddings_index.pkl`, and `data/embedding_scalers.pkl`. L2-norm per block; scalars min-maxed and divided by `sqrt(8)`.
 9. Sanity-check the combined embedding via `source/scripts/test_combined_embeddings.ipynb` — top-10 cosine neighbors per query game. **Human gate before step 10**; the next stage encodes the embedding contract into a trained policy.
-10. `python source/scripts/build_mdp_dataset.py` — build the continuous-action MDP from `reviews.csv` + the combined embedding; saves `data/mdp_dataset.h5`.
+10. `python source/scripts/build_mdp_dataset.py` — build the continuous-action MDP from `reviews.csv` + the combined embedding; saves `data/mdp_dataset.npz` (observations + `action_row_idx` indices into `E` + rewards + terminals; Stage 3 reconstructs actions on load).
 11. `python source/scripts/train_cql.py` — train `d3rlpy.algos.CQL` (gamma=0.2, action_scaler="min_max"), hold out the last 10% of each user's reviews for FQE, save TorchScript policy to `data/policy.pt` (input/output dim 1584).
 12. Sanity-check the trained policy via `source/scripts/test_cql_policy.ipynb` — top-10 recommendations from a cold-start state plus four user profiles (RPG/FPS/strategy/indie). **Human gate before Stage 4**; the policy's behavior here is what the Gradio app will surface to end users.
 

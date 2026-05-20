@@ -23,7 +23,7 @@ This file captures the path from the current state of the repo to a deployed off
 
 ### Stage 2 — MDP dataset
 
-`source/scripts/build_mdp_dataset.py` builds the continuous-action MDP from `data/reviews.csv` + the combined embedding. For each user (sorted by review date), iterate reviews and emit `(state, action, reward, terminal)`: state = running average of past action vectors (zero vector at t=0, dim 1584); action = E-row of the rated game; reward = `(score - 5) / 5` clipped to `[-1, 1]`; terminal = last review per user. Drop reviews whose `game_name` isn't in the embedding index. Saves `data/mdp_dataset.h5` via `d3rlpy.dataset.MDPDataset.dump`.
+`source/scripts/build_mdp_dataset.py` builds the continuous-action MDP from `data/reviews.csv` + the combined embedding. For each user (sorted by review date), iterate reviews and emit `(state, action, reward, terminal)`: state = running average of past action vectors (zero vector at t=0, dim 1584); action = E-row of the rated game; reward = `(score - 5) / 5` (already in `[-1, 1]` since scores are `[0, 10]`); terminal = last review per user. Drop reviews with null author/game_name and reviews whose `game_name` isn't in the embedding index. Saves `data/mdp_dataset.npz` (compressed) containing `observations` (N, 1584) `float32`, `action_row_idx` (N,) `int32`, `rewards` (N,) `float32`, `terminals` (N,) `float32`, plus `data/mdp_meta.json`. We store action *indices* into `E` rather than materialized action vectors so the file stays ~1 GB and auto-syncs if `E` is rebuilt; Stage 3 reconstructs `actions = E[action_row_idx]` before passing to `d3rlpy.dataset.MDPDataset`. Stays dep-free of `d3rlpy`.
 
 ### Stage 3 — CQL training
 
