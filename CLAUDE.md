@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Offline reinforcement-learning game recommender. Pulls game metadata + user ratings from public APIs, builds several game embeddings, and (eventually) trains a CQL policy with `d3rlpy` for deployment as a HuggingFace app. `ideia.txt` is the working design doc — written in Portuguese, kept up-to-date by the user, and the source of truth for what's done vs. planned. Read it before making non-trivial changes.
+Offline reinforcement-learning game recommender. Pulls game metadata + user ratings from public APIs, builds several game embeddings, and trains an offline-RL policy (IQL via `d3rlpy`; see `PLAN.md` for why IQL was substituted for CQL) for deployment as a HuggingFace app. `ideia.txt` is the working design doc — written in Portuguese, kept up-to-date by the user, and the source of truth for what's done vs. planned. Read it before making non-trivial changes.
 
 ## Environment
 
@@ -24,7 +24,7 @@ IGDB_CLIENT_SECRET=
 METACRITIC_API_KEY=   # used by source/APIs/metacritic_api.py and metacritic_create_user_review_dataset.py
 ```
 
-`requirements.txt` does **not** install PyTorch — embedding scripts call `SentenceTransformer(..., device="cuda")`, so a CUDA-capable PyTorch must be installed separately (or the `device` flag changed). `d3rlpy` is also not listed; the MDP/training code in `source/snippets/` is reference material and won't run unless installed.
+`requirements.txt` does **not** install PyTorch — embedding scripts call `SentenceTransformer(..., device="cuda")` and the IQL training script uses `torch.cuda`, so a CUDA-capable PyTorch must be installed separately (or the `device` flag changed). The repo was trained on `torch==2.11.0+cu130` with an RTX 3050 6GB. `d3rlpy==2.8.1` is now pinned in `requirements.txt`; the MDP/training code in `source/snippets/` remains reference material — runtime training happens via `source/scripts/train_iql.py`.
 
 ## Running the pipeline
 
@@ -45,8 +45,8 @@ All scripts are designed to be invoked **from the project root** — they use re
 8. `python source/scripts/build_combined_embeddings.py` — concatenate the four embedding pickles + scaled scalars into `data/game_embeddings_matrix.npy` (shape `(N, 1584)`), `data/game_embeddings_index.pkl`, and `data/embedding_scalers.pkl`. L2-norm per block; scalars min-maxed and divided by `sqrt(8)`.
 9. Sanity-check the combined embedding via `source/scripts/test_combined_embeddings.ipynb` — top-10 cosine neighbors per query game. **Human gate before step 10**; the next stage encodes the embedding contract into a trained policy.
 10. `python source/scripts/build_mdp_dataset.py` — build the continuous-action MDP from `reviews.csv` + the combined embedding; saves `data/mdp_dataset.npz` (observations + `action_row_idx` indices into `E` + rewards + terminals; Stage 3 reconstructs actions on load).
-11. `python source/scripts/train_cql.py` — train `d3rlpy.algos.CQL` (gamma=0.2, action_scaler="min_max"), hold out the last 10% of each user's reviews for FQE, save TorchScript policy to `data/policy.pt` (input/output dim 1584).
-12. Sanity-check the trained policy via `source/scripts/test_cql_policy.ipynb` — top-10 recommendations from a cold-start state plus four user profiles (RPG/FPS/strategy/indie). **Human gate before Stage 4**; the policy's behavior here is what the Gradio app will surface to end users.
+11. `python source/scripts/train_iql.py` — train `d3rlpy.algos.IQL` (gamma=0.2, `MinMaxActionScaler`), hold out the last 10% of each user's reviews for FQE, save TorchScript policy to `data/policy.pt` (input/output dim 1584). IQL replaces CQL here because CQL's conservative loss underflows at action_dim=1584; see `PLAN.md` Stage 3 for the rationale.
+12. Sanity-check the trained policy via `source/scripts/test_policy.ipynb` — top-10 recommendations from a cold-start state plus four user profiles (RPG/FPS/strategy/indie). **Human gate before Stage 4**; the policy's behavior here is what the Gradio app will surface to end users.
 
 See `PLAN.md` for the strategy that introduced steps 8–12 and the HuggingFace deployment that follows.
 
@@ -73,7 +73,7 @@ This is the only place where the five APIs are reconciled into a single per-game
 Every `*_embedding.pkl` in `data/` is a `dict[str, np.ndarray]` keyed by the game's `name` (not `real_name`). The test notebooks rely on this shape; keep it consistent across new generators. Games whose tag set / description / SVD row would be a zero-vector are dropped (see `generate_game_tags_embedding.py` — zero vectors break cosine similarity).
 
 ### Combined embedding `E` (dim 1584)
-Stage 1 of the deployment pipeline (`source/scripts/build_combined_embeddings.py`; see `PLAN.md`) concatenates: title SBERT (768) + description SBERT (768) + tags SVD (32) + collab SVD (8) + 8 scaled scalars. Each of the four embedding blocks is L2-normalized independently; scalars are min-maxed to `[0,1]` then divided by `sqrt(8)` so they don't dominate cosine. Missing blocks are imputed with the per-block mean over present games; games still missing the title block are dropped. The matrix lives at `data/game_embeddings_matrix.npy` and is the **only** representation that downstream stages (MDP build, CQL training, inference) read — change the concat order, the per-block normalization, or the scalar scaling and you invalidate `data/policy.pt`.
+Stage 1 of the deployment pipeline (`source/scripts/build_combined_embeddings.py`; see `PLAN.md`) concatenates: title SBERT (768) + description SBERT (768) + tags SVD (32) + collab SVD (8) + 8 scaled scalars. Each of the four embedding blocks is L2-normalized independently; scalars are min-maxed to `[0,1]` then divided by `sqrt(8)` so they don't dominate cosine. Missing blocks are imputed with the per-block mean over present games; games still missing the title block are dropped. The matrix lives at `data/game_embeddings_matrix.npy` and is the **only** representation that downstream stages (MDP build, IQL training, inference) read — change the concat order, the per-block normalization, or the scalar scaling and you invalidate `data/policy.pt`.
 
 ### Inference layer — `source/app/` (planned)
 The HuggingFace app composes three modules:

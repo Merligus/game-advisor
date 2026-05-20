@@ -6,6 +6,9 @@
 *.npy
 *.npz
 *.json
+*.pt
+*.h5
+d3rlpy_logs/
 
 !gamespot_reviews.csv
 !metacritic_reviews.csv

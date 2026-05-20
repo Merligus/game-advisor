@@ -99,18 +99,18 @@ python source/scripts/build_combined_embeddings.py
 
 Then sanity-check by opening `source/scripts/test_combined_embeddings.ipynb` and eyeballing the top-10 closest games for a handful of query titles before moving on.
 
-### Train CQL Policy
+### Train Offline-RL Policy (IQL)
 
-Build the offline-RL MDP dataset from `data/reviews.csv` + the combined embedding and train a continuous-action CQL policy via `d3rlpy`. State = running average of past action vectors; action = game embedding; reward = `(score - 5) / 5`; terminal = last review per user.
+Build the offline-RL MDP dataset from `data/reviews.csv` + the combined embedding and train a continuous-action IQL policy via `d3rlpy`. State = running average of past action vectors; action = game embedding; reward = `(score - 5) / 5`; terminal = last review per user. (IQL is used in place of CQL, which has a numerical pathology with our 1584-d action space — see `PLAN.md` for the rationale.)
 
 ```bash
 python source/scripts/build_mdp_dataset.py
-python source/scripts/train_cql.py
+python source/scripts/train_iql.py
 ```
 
 Saves a TorchScript policy to `data/policy.pt` (input dim 1584, output dim 1584).
 
-Then sanity-check the trained policy by opening `source/scripts/test_cql_policy.ipynb` and eyeballing the top-10 recommendations from a cold-start state plus a handful of user profiles (RPG fan, FPS fan, etc.) before moving on.
+Then sanity-check the trained policy by opening `source/scripts/test_policy.ipynb` and eyeballing the top-10 recommendations from a cold-start state plus a handful of user profiles (RPG fan, FPS fan, etc.) before moving on.
 
 ### Run the HuggingFace App
 
