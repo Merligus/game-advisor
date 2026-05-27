@@ -8,5 +8,6 @@ thefuzz==0.22.1
 scikit-learn==1.8.0
 sentence-transformers==5.2.3
 d3rlpy==2.8.1
+gradio==6.15.1
 # torch is installed separately (CUDA build varies by host); this repo was
 # trained on torch 2.11.0+cu130 with an RTX 3050 6GB Laptop GPU.

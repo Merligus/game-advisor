@@ -22,7 +22,7 @@ matching on missing fields would empty the result set.
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
-from app import artifacts
+from recommender import artifacts
 
 
 def _platform_ok(game_platforms, requested_lower) -> bool:

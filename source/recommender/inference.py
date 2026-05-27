@@ -33,8 +33,8 @@ import ast
 
 import numpy as np
 
-from app import artifacts
-from app.candidate_generator import candidates
+from recommender import artifacts
+from recommender.candidate_generator import candidates
 
 
 def _policy_action(state: np.ndarray) -> np.ndarray:
@@ -58,7 +58,9 @@ def _first_cover(raw) -> str | None:
         return None
     for u in urls or []:
         if u:
-            return ("https:" + u) if str(u).startswith("//") else str(u)
+            url = ("https:" + u) if str(u).startswith("//") else str(u)
+            # IGDB returns t_thumb (90x128) URLs; upgrade to a display-sized cover.
+            return url.replace("/t_thumb/", "/t_cover_big/")
     return None
 
 
