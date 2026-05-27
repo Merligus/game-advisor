@@ -14,7 +14,7 @@ This file captures the path from the current state of the repo to a deployed off
 `source/scripts/build_combined_embeddings.py` reads the four existing pickles in `data/` plus the eight scalar columns of `games.csv` (`metacritic_rating, igdb_rating, rawg_rating, hltb_rating, user_rating, main_story, main_extra, completionist`), L2-normalizes each embedding block independently, min-max scales the scalars to `[0,1]` and divides them by `sqrt(8)` so cosine isn't dominated by the scalars, imputes missing blocks with the block mean over present games, drops games still missing the title block, and writes:
 
 - `data/game_embeddings_matrix.npy` — `float32`, shape `(N, 1584)`
-- `data/game_embeddings_index.pkl` — `name, row_idx` + filter columns (`release_year, platforms, language_supports, main_story, main_extra, completionist`)
+- `data/game_embeddings_index.pkl` — `name, row_idx` + filter columns (`release_year, platforms, language_supports, main_story, main_extra, completionist`). `release_year` is clamped to NaN beyond `MAX_PLAUSIBLE_YEAR` (2035) to drop IGDB far-future TBA placeholders (clustered at 2097-2099); they become "unknown" rather than bogus future releases. Rebuilding the index this way leaves `E` byte-identical (year is index-only metadata, not a model feature), so `policy.pt` stays valid.
 - `data/embedding_scalers.pkl` — scaler params + per-block imputation means, so inference normalizes new inputs identically
 
 ### Stage 1.5 — Sanity-check the combined embedding (notebook)
@@ -37,11 +37,15 @@ This file captures the path from the current state of the repo to a deployed off
 
 ### Stage 4 — Candidate generator
 
-`source/app/candidate_generator.py::candidates(filters, played_games=None, k=500)` filters `game_embeddings_index.pkl` by year range, platform intersection, and language substring, then optionally reranks by cosine against the played-games mean profile and trims to `k`. Uses `sklearn.metrics.pairwise.cosine_similarity` (already in `requirements.txt`).
+`source/app/candidate_generator.py::candidates(filters, played_games=None, k=500)` filters `game_embeddings_index.pkl` by year range, platform match, and language substring, then optionally reranks by cosine against the played-games mean profile and trims to `k` (`k=None` disables the cap). Uses `sklearn.metrics.pairwise.cosine_similarity` (already in `requirements.txt`).
+
+**Filter semantics — lenient on missing data**: a game is excluded only when its metadata is *present and contradicts* the filter. This is load-bearing because `language_supports` covers only ~6% of the catalog and `release_year` ~83%; strict matching on missing fields would empty the result set. Platform matching is case-insensitive **one-directional** substring (requested label ⊂ game label) so `"PC"` matches `"PC (Microsoft Windows)"` — but a `"PlayStation 5"` request does not match a game labeled only `"PlayStation"` (the bidirectional version over-matched PS1 titles into PS5 filters; caught by the Stage 5 compliance check).
+
+App modules share `source/app/artifacts.py` — cached (`lru_cache`) loaders for the embedding matrix, normalized matrix, index frame, `name → row` map, and the CPU-loaded TorchScript policy. Paths resolve relative to the file so imports are cwd-independent; the 165 MB matrix is read once per process. (This shared loader wasn't in the original plan but keeps Stages 4-6 from each re-reading the artifacts.)
 
 ### Stage 5 — Inference
 
-`source/app/inference.py::recommend(state, filters, played_games, top_n=5)` calls the candidate generator, runs the TorchScript policy on `state`, scores candidates by cosine against the predicted action vector, filters out games already in `played_games`, and returns dicts `{name, score, cover_url, description, release}` joined from the pickle index + cached `games.csv`. Optional live IGDB cover-art refresh via `source/APIs/igdb_api.py::IGDB.search`.
+`source/app/inference.py::recommend(state, filters, played_games, top_n=5, profile_prefilter=False)` calls the candidate generator, runs the TorchScript policy on `state`, scores candidates by cosine against the predicted action vector, filters out games already in `played_games`, and returns dicts `{name, score, release_year, platforms, cover_url, description}` joined from the pickle index + cached `games.csv` (`artifacts.games_metadata()`). Optional live IGDB cover-art refresh via `source/APIs/igdb_api.py::IGDB.search`. **Default is profile rerank** (`profile_prefilter=True`, `candidate_k=30`): the candidate generator keeps the 30 games closest to the play history and the policy reranks those — anchoring recommendations to the history and masking the policy's current undertraining. Cold start (no history) falls back to filter-only with `k=None` so the policy ranks the whole filtered set (also dodges the alphabetical-truncation artifact). `profile_prefilter=False` always lets the policy rank the full filtered set — the "trust the policy" mode, preferable once the policy is well trained. The two modes are why "Battlefield Hardline: Getaway" appears under `profile_prefilter=False` but not under the default: it passes the PC/2010+ filter and the policy's action points near it, but it ranks 593rd in raw similarity to an RPG history, far outside the kept 30.
 
 ### Stage 6 — Gradio app on HuggingFace
 

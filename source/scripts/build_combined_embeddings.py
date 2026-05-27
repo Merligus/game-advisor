@@ -53,6 +53,12 @@ SCALAR_COLS = [
 ]
 TTB_COLS = {"main_story", "main_extra", "completionist"}
 
+# IGDB encodes TBA / unannounced games with far-future placeholder dates
+# (this dataset clusters them at 2097-2099, with a clean gap after 2030).
+# Clamp implausibly-distant release years to NaN so the year filter and the
+# displayed year treat them as "unknown" rather than as a real 2098 release.
+MAX_PLAUSIBLE_YEAR = 2035
+
 
 def load_pkl(filename: str) -> dict:
     with open(f"./data/{filename}", "rb") as fh:
@@ -158,6 +164,8 @@ print(f"\nCombined embedding matrix E: {E.shape}, dtype={E.dtype}")
 
 # 7. Build index DataFrame
 release_year = pd.to_datetime(df["release"], errors="coerce").dt.year
+# Implausibly-distant years (IGDB TBA placeholders) -> NaN (treated as unknown).
+release_year = release_year.where(release_year <= MAX_PLAUSIBLE_YEAR)
 index_df = pd.DataFrame(
     {
         "name": names,

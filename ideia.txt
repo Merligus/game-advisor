@@ -136,7 +136,7 @@ updates:
     + testar a nova tabela fazendo queries comparativos
     + depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
     + treinar offline reinforcement learning CQL. instalar d3rlpy + torch
-    - testar o treino
+    + testar o treino
     - montar app no hugginface
         - frontend
         - cold start, experiencia inicial pra saber o estado do usuario
