@@ -28,10 +28,12 @@ IGDB_CLIENT_ID=
 
 ### Create the user game review dataset
 
-In game-advisor folder run:
+In the game-advisor folder, build the review tables (Gamespot, then Metacritic seeded from Gamespot's unique games, then merge into `data/reviews.csv`):
 
 ```bash
-python source/scripts/create_user_review_dataset.py
+python source/scripts/gamespot_create_user_review_dataset.py
+python source/scripts/metacritic_create_user_review_dataset.py
+python source/scripts/merge_reviews.py
 ```
 
 ### Create the game dataset
@@ -101,7 +103,7 @@ Then sanity-check by opening `source/scripts/test_combined_embeddings.ipynb` and
 
 ### Train Offline-RL Policy (IQL)
 
-Build the offline-RL MDP dataset from `data/reviews.csv` + the combined embedding and train a continuous-action IQL policy via `d3rlpy`. State = running average of past action vectors; action = game embedding; reward = `(score - 5) / 5`; terminal = last review per user. (IQL is used in place of CQL, which has a numerical pathology with our 1584-d action space — see `PLAN.md` for the rationale.)
+Build the offline-RL MDP dataset from `data/reviews.csv` + the combined embedding and train a continuous-action IQL policy via `d3rlpy`. State = running average of past action vectors; action = game embedding; reward = per-user z-scored review score (rescaled to `[-1, 1]`); terminal = last review per user. (IQL is used in place of CQL, which has a numerical pathology with our 1584-d action space — see `PLAN.md` for the rationale.)
 
 ```bash
 python source/scripts/build_mdp_dataset.py
@@ -121,5 +123,9 @@ python app.py
 ```
 
 Open `http://localhost:7860`. To deploy as a HuggingFace Space, push the repo to a Space with `sdk: gradio`; ship the four artifacts in `data/` (`policy.pt`, `game_embeddings_matrix.npy`, `game_embeddings_index.pkl`, `embedding_scalers.pkl`) and put the IGDB credentials in the Space's secrets.
+
+## Status & known limitations
+
+The pipeline runs end-to-end and the app produces sensible recommendations for users with a play history. The honest caveat: the trained policy's *action vector* tends to collapse toward the embedding centroid (a known failure mode of advantage-weighted regression on a high-dimensional continuous action with weakly-contrasting rewards), so recommendation quality currently leans on the candidate generator's profile rerank (`profile_prefilter=True`, keep the 30 games closest to the play history, policy reranks those) rather than the policy alone. Per-user z-scored rewards were introduced to give the policy more contrast to learn from. Cold-start (no history) is the regime where the policy's weakness is most visible. `PLAN.md` → "Known limitations & follow-up strategies" tracks what's been tried (more training steps; reward sharpening) and the remaining levers (lower-dim action target; discrete action-ID ranking over the candidate set).
 
 See `PLAN.md` for the full strategy and `ideia.txt` for the long-form design log.

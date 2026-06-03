@@ -3,7 +3,9 @@
 Continuous-action formulation (see PLAN.md):
   state    = running average of past action vectors (zero vector at t=0, dim 1584)
   action   = E-vector of the rated game
-  reward   = (score - 5) / 5   in [-1, 1]   (scores already in [0, 10])
+  reward   = per-user z-scored review score, clipped to [-3, 3] and /3 -> [-1, 1]
+             (see the reward block below for the rationale; replaces the old
+             global (score - 5) / 5 which gave almost no advantage contrast)
   terminal = 1 on the user's last review (sorted by date asc), else 0
 
 Drops reviews with null author/game_name or whose game isn't in the
@@ -79,8 +81,27 @@ action_row_idx = df["game_name"].map(name_to_row).to_numpy(dtype=np.int32)
 # 5. Preallocate output arrays (no `actions` matrix — Stage 3 reconstructs
 # it via E[action_row_idx])
 observations = np.zeros((N, ACTION_DIM), dtype=np.float32)
-rewards = ((df["score"].to_numpy(dtype=np.float32) - 5.0) / 5.0).astype(np.float32)
 terminals = np.zeros(N, dtype=np.float32)
+
+# Reward = per-user z-scored review score, clipped to [-Z_CLIP, Z_CLIP] then
+# rescaled to [-1, 1]. Centering each user's ratings on their own mean turns the
+# signal into "did this user like this game *relative to their own taste*",
+# which gives the offline-RL advantage estimate real contrast: ~42% of
+# transitions become negative, versus only ~17% under the old global
+# (score - 5) / 5 (mean +0.41). That flat, mostly-positive signal gave IQL's
+# advantage-weighted policy extraction nothing to discriminate on, collapsing
+# the actor toward the embedding centroid (measured: same recommendations from
+# every state, predicted-action cosines bunched ~0.74). Users with <2 reviews
+# (no std) or zero rating variance fall back to global mean/std centering so
+# their absolute level vs the population is still encoded.
+Z_CLIP = 3.0
+global_mean = float(df["score"].mean())
+global_std = float(df["score"].std())
+user_mean = df.groupby("author")["score"].transform("mean")
+user_std = df.groupby("author")["score"].transform("std")
+z = (df["score"] - user_mean) / user_std
+z = z.where(user_std.notna() & (user_std > 0), (df["score"] - global_mean) / global_std)
+rewards = (np.clip(z.to_numpy(), -Z_CLIP, Z_CLIP) / Z_CLIP).astype(np.float32)
 
 # 6. Per-user vectorized fill
 # observations[i] for the j-th step of a user = mean of that user's previous (j-1) action vectors

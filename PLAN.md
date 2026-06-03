@@ -4,7 +4,7 @@ This file captures the path from the current state of the repo to a deployed off
 
 ## Load-bearing decisions
 
-- **Continuous action space.** The CQL policy emits a game-embedding vector; we nearest-neighbor it inside a filtered candidate set to produce top-K recommendations. Matches `source/snippets/train_step.py`. The alternative — discrete actions over ~20k game IDs — would require a 20k-way Q-head and doesn't compose with candidate generation.
+- **Continuous action space.** The offline-RL policy (IQL — see Stage 3) emits a game-embedding vector; we nearest-neighbor it inside a filtered candidate set to produce top-K recommendations. The alternative — discrete actions over ~26k game IDs — would need a 26k-way Q-head. *This decision is the suspected root cause of the centroid-collapse problem (see "Known limitations & follow-up strategies"); discrete action-ID over the candidate set is now an open follow-up.*
 - **Full 1584-d combined embedding.** Per-game vector `E` = concat(title 768, description 768, tags 32, collab 8, scalars 8). No PCA reduction step. Change the concat order or per-block normalization and you invalidate the trained policy.
 
 ## Stages
@@ -23,13 +23,15 @@ This file captures the path from the current state of the repo to a deployed off
 
 ### Stage 2 — MDP dataset
 
-`source/scripts/build_mdp_dataset.py` builds the continuous-action MDP from `data/reviews.csv` + the combined embedding. For each user (sorted by review date), iterate reviews and emit `(state, action, reward, terminal)`: state = running average of past action vectors (zero vector at t=0, dim 1584); action = E-row of the rated game; reward = `(score - 5) / 5` (already in `[-1, 1]` since scores are `[0, 10]`); terminal = last review per user. Drop reviews with null author/game_name and reviews whose `game_name` isn't in the embedding index. Saves `data/mdp_dataset.npz` (compressed) containing `observations` (N, 1584) `float32`, `action_row_idx` (N,) `int32`, `rewards` (N,) `float32`, `terminals` (N,) `float32`, plus `data/mdp_meta.json`. We store action *indices* into `E` rather than materialized action vectors so the file stays ~1 GB and auto-syncs if `E` is rebuilt; Stage 3 reconstructs `actions = E[action_row_idx]` before passing to `d3rlpy.dataset.MDPDataset`. Stays dep-free of `d3rlpy`.
+`source/scripts/build_mdp_dataset.py` builds the continuous-action MDP from `data/reviews.csv` + the combined embedding. For each user (sorted by review date), iterate reviews and emit `(state, action, reward, terminal)`: state = running average of past action vectors (zero vector at t=0, dim 1584); action = E-row of the rated game; reward = **per-user z-scored review score** — `(score − user_mean) / user_std`, clipped to `[-3, 3]` and divided by 3 → `[-1, 1]` (users with <2 reviews or zero rating variance fall back to global mean/std centering); terminal = last review per user. The reward was originally the global `(score − 5) / 5`, but that distribution was mean **+0.41 / only ~17% negative** — too flat for IQL's advantage estimate to discriminate states, which collapsed the actor (see "Known limitations & follow-up strategies"). Z-scoring centers each user on their own taste, yielding mean **≈0 / ~42% negative** — real contrast. Drop reviews with null author/game_name and reviews whose `game_name` isn't in the embedding index. Saves `data/mdp_dataset.npz` (compressed) containing `observations` (N, 1584) `float32`, `action_row_idx` (N,) `int32`, `rewards` (N,) `float32`, `terminals` (N,) `float32`, plus `data/mdp_meta.json`. We store action *indices* into `E` rather than materialized action vectors so the file stays ~1 GB and auto-syncs if `E` is rebuilt; Stage 3 reconstructs `actions = E[action_row_idx]` before passing to `d3rlpy.dataset.MDPDataset`. Stays dep-free of `d3rlpy`.
 
 ### Stage 3 — Offline-RL training (IQL)
 
 `source/scripts/train_iql.py` instantiates `d3rlpy.algos.IQLConfig(action_scaler=MinMaxActionScaler(), gamma=0.2, batch_size=256, actor_learning_rate=3e-4, critic_learning_rate=3e-4)` (other IQL knobs — `expectile=0.7`, `weight_temp=3.0`, `max_weight=100` — left at d3rlpy defaults). First end-to-end pass: `n_steps=50_000`; bump to `200_000` once the pipeline is green. Holds out the last 10% of each user's reviews and off-policy-evaluates the trained policy with `d3rlpy.ope.FQE` (`InitialStateValueEstimationEvaluator`). Saves TorchScript policy to `data/policy.pt` (input dim 1584, output dim 1584) and a training summary to `data/training_log.json`.
 
 > **Why IQL and not CQL (the plan originally called for CQL):** d3rlpy's CQL implementation computes `math.log(0.5**action_size)` to get the log-density of uniform random actions over `[-1, 1]^d`. With `action_dim=1584`, `0.5**1584` underflows to `0.0` in float64 and the call raises `ValueError: math domain error`. The stable form `1584 * math.log(0.5) ≈ -1098` is mathematically correct, but even patched, that constant +1098 offset on the random-action importance term swamps the data Q-value signal inside CQL's conservative loss — the offline-safety regularization becomes functionally degenerate at this action dim. IQL provides the same offline-safety guarantee (expectile-clipped value learning + AWR-style policy extraction) without that pathology and is the modern offline-RL default for continuous high-dim actions. Same algorithmic role; cleaner scaling.
+
+> **Training-steps note:** 50K is the diagnostic run (behaviour is determined by ~50K — see the follow-up section for the 50K-vs-200K A/B); bump to 200K only once a change is shown to move behaviour. FQE uses the holdout solely as a sanity scalar — its absolute value isn't comparable across reward definitions (the z-score reward rescaled the return), so read it as "finite and positive", not as a quality metric.
 
 ### Stage 3.5 — Sanity-check the trained policy (notebook)
 
@@ -60,7 +62,29 @@ App modules share `source/recommender/artifacts.py` — cached (`lru_cache`) loa
 
 ### Stage 7 — Docs
 
-This file (`PLAN.md`) plus the extensions to `README.md` (one section per new stage with the single command to invoke it) and `CLAUDE.md` (pipeline steps 8–11, the combined-embedding contract, and the inference subsection).
+This file (`PLAN.md`) plus the extensions to `README.md` (one section per new stage with the single command to invoke it) and `CLAUDE.md` (pipeline steps 8–12, the combined-embedding contract, and the inference subsection).
+
+## Known limitations & follow-up strategies
+
+### Problem: the continuous-action policy collapses to the embedding centroid
+
+**Symptom (measured).** Under `profile_prefilter=False` ("let the policy rank the whole filtered set"), the policy returns nearly the same games regardless of the user state, and the predicted-action cosines to candidate games are all bunched around ~0.74 — i.e. the actor outputs roughly the embedding **centroid** rather than a state-specific direction. The cold-start top-5 is a fixed "default cluster" (Revenge of Arcade, BattleZone, Rayman 2, …).
+
+**Why.** Three compounding causes: (1) a 1584-d *continuous* action extracted by IQL's advantage-weighted regression converges toward a near-constant conditional mean; (2) the original reward `(score−5)/5` was mostly positive (~0.41 mean, ~17% negative), so advantages barely contrasted states and the AWR weights were near-uniform; (3) the cold-start zero-state carries no signal. It is **structural, not under-training** — losses kept improving 50K→200K while recommendations stayed identical.
+
+### What's been tried
+
+- **More steps (50K → 200K).** Losses improved (critic 0.45→0.11) but cold-start picks were *identical* and FQE flat (1.484→1.450). Confirms collapse is not an under-training artifact. Behaviour is locked in by ~50K, so 50K is the standard diagnostic run.
+- **Sharper rewards — per-user z-score (option 1, applied in Stage 2).** Replaces the flat global reward (mean +0.41, 17% neg) with a per-user-centered one (mean ≈0, ~42% neg) so the advantage estimate has contrast. *Evaluated via a 50K A/B against the original collapsed 50K run — see the latest `data/training_log.json` and the `test_policy.ipynb` divergence diagnostic for the outcome.*
+
+### Remaining levers (not yet tried)
+
+- **Lower-dim action target.** Predict into a compressed action space (e.g. PCA E → 64–128d) and map back; less room for centroid collapse than regressing 1584-d directly.
+- **Discrete action-ID over the candidate set.** Reframe as ranking: have the policy score each of the ≤K candidate games (`Q(state, game)→scalar`) and argmax, instead of regressing a vector. This is how most production recommenders work and sidesteps the continuous-mean collapse, but it's a re-architecture of Stages 2/3/5 and fights d3rlpy's fixed-action-space assumption (would likely need a custom scorer rather than an off-the-shelf discrete algo). Revisits the Stage-0 continuous-vs-discrete decision now that candidate generation bounds the action set.
+
+### Current mitigation (load-bearing)
+
+The **profile-rerank default** (`profile_prefilter=True`, `candidate_k=30`) means the candidate generator's cosine-to-history — *not* the policy — drives recommendation quality: it keeps the 30 games closest to the play history and the policy only reranks those. This is why warm-start recommendations look good despite the collapse. **Do not remove the profile rerank assuming the policy will rank well on its own** until one of the levers above demonstrably fixes the collapse; cold-start (no history) is the regime where the policy's weakness is still visible.
 
 ## End-to-end run order
 
