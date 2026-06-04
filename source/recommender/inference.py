@@ -1,32 +1,23 @@
 """Stage 5: turn a user state + filters into ranked game recommendations.
 
-`recommend(state, filters, played_games, top_n=5)` is the hot path the
-HuggingFace app calls per request:
+`recommend(state, filters, played_games, top_n, mode)` is the hot path the
+HuggingFace app calls per request. It runs three interchangeable ranking modes:
 
-  1. candidate set  — `candidate_generator.candidates(filters, ...)`
-  2. policy action  — run the TorchScript policy on `state` (dim 1584)
-  3. rerank         — cosine of every candidate's embedding vs the action
-  4. drop played    — remove games already in `played_games`
-  5. enrich         — attach release_year / cover_url / description from games.csv
-                      (optionally refreshed live from IGDB)
+  - "profile_rl"   (default): candidate generator keeps the `candidate_k` games
+                   closest to the play history, then the RL policy reranks those.
+                   History-anchored; masks the policy's centroid collapse.
+  - "rl_only":     policy ranks the entire filtered catalog ("trust the policy").
+                   Exposes the policy's raw behavior (currently weak — see PLAN.md
+                   "Known limitations").
+  - "profile_only": rank purely by cosine to the play-history profile; the policy
+                   is not used at all. A content-based baseline / ablation.
 
-Candidate generation **profile-reranks by default** (`profile_prefilter=True`):
-the candidate generator keeps the `candidate_k` (default 30) games closest to
-the user's play history, and the policy reranks those. This anchors results to
-the play history and masks the policy's current undertraining. With no play
-history (cold start) it falls back to filter-only with no cap, so the policy
-reranks the whole filtered set (no alphabetical-truncation artifact). Set
-`profile_prefilter=False` to always let the policy rank the full filtered set —
-the "trust the policy" mode, preferable once the policy is well trained.
-
-(The profile rerank is why "Battlefield Hardline: Getaway" drops out of the RPG
-demo: it passes the PC/2010+ filter but ranks 593rd in raw similarity to an RPG
-history, outside the kept candidates — even though the policy's action points
-near it. See PLAN.md Stage 5.)
+All modes share: filter → rank → drop played → enrich (year / cover / description
+from games.csv, optionally refreshed live from IGDB).
 
 `state` is supplied by the caller (Stage 6 `state_builder.cold_start_state`);
-`played_games` must be canonical names (the resolved output of the state
-builder) so the drop-played and optional profile rerank line up.
+`played_games` must be canonical names (the resolved output of the state builder)
+so the drop-played step and the profile ranking line up.
 """
 
 import ast
@@ -35,6 +26,8 @@ import numpy as np
 
 from recommender import artifacts
 from recommender.candidate_generator import candidates
+
+MODES = ("profile_rl", "rl_only", "profile_only")
 
 
 def _policy_action(state: np.ndarray) -> np.ndarray:
@@ -48,47 +41,99 @@ def _policy_action(state: np.ndarray) -> np.ndarray:
         return policy(t).cpu().numpy().ravel()
 
 
-def _first_cover(raw) -> str | None:
-    """games.csv stores cover_url as a stringified list; return the first usable URL."""
-    if raw is None or (isinstance(raw, float) and np.isnan(raw)):
-        return None
+# All GameType fields, grouped by how they're parsed out of games.csv.
+_STR_FIELDS = ("name", "release", "description")
+_FLOAT_FIELDS = (
+    "rawg_rating",
+    "igdb_rating",
+    "hltb_rating",
+    "metacritic_rating",
+    "user_rating",
+    "main_story",
+    "main_extra",
+    "completionist",
+)
+_LIST_FIELDS = (
+    "platforms",
+    "cover_url",
+    "developers",
+    "publishers",
+    "language_supports",
+    "genres",
+    "keywords",
+)
+
+
+def _parse_list(v) -> list:
+    """games.csv stores list columns as str(list); parse back to a clean list."""
+    if isinstance(v, (list, tuple)):
+        return [x for x in v if x]
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return []
     try:
-        urls = ast.literal_eval(raw) if isinstance(raw, str) else raw
+        items = ast.literal_eval(v) if isinstance(v, str) else v
     except (ValueError, SyntaxError):
-        return None
-    for u in urls or []:
+        return []
+    return [x for x in items if x] if isinstance(items, (list, tuple)) else []
+
+
+def _display_cover(cover_list) -> str | None:
+    """First usable cover URL: fix protocol-relative URLs, upscale IGDB thumbnails."""
+    for u in cover_list or []:
         if u:
             url = ("https:" + u) if str(u).startswith("//") else str(u)
-            # IGDB returns t_thumb (90x128) URLs; upgrade to a display-sized cover.
             return url.replace("/t_thumb/", "/t_cover_big/")
     return None
 
 
-def _enrich(name: str, score: float, igdb=None) -> dict:
+def _enrich(name: str, score: float, enrich: bool = False) -> dict:
+    """Build the full GameType record for `name` from games.csv, optionally
+    filling empty fields from the live multi-API merge."""
     meta = artifacts.games_metadata()
     idx = artifacts.index_frame()
     row = idx.iloc[artifacts.name_to_row()[name]]
-    rec = {
-        "name": name,
-        "score": score,
-        "release_year": None if np.isnan(row["release_year"]) else int(row["release_year"]),
-        "platforms": list(row["platforms"]),
-        "cover_url": None,
-        "description": None,
-    }
+
+    rec: dict = {"score": score, "release_year": None if np.isnan(row["release_year"]) else int(row["release_year"])}
+    for f in _STR_FIELDS:
+        rec[f] = ""
+    for f in _FLOAT_FIELDS:
+        rec[f] = 0.0
+    for f in _LIST_FIELDS:
+        rec[f] = []
+    rec["name"] = name
+
     if name in meta.index:
         m = meta.loc[name]
-        rec["cover_url"] = _first_cover(m.get("cover_url"))
-        desc = m.get("description")
-        rec["description"] = None if (desc is None or (isinstance(desc, float) and np.isnan(desc))) else str(desc)
-    # Optional live cover-art refresh (Stage 6 may pass an IGDB client).
-    if igdb is not None and not rec["cover_url"]:
-        try:
-            hits = igdb.search(name, max_n=1)
-            if hits and hits[0].cover_url:
-                rec["cover_url"] = _first_cover(hits[0].cover_url)
-        except Exception:
-            pass
+        for f in _STR_FIELDS:
+            v = m.get(f)
+            rec[f] = "" if (v is None or (isinstance(v, float) and np.isnan(v))) else str(v)
+        rec["name"] = name  # keep the canonical index name
+        for f in _FLOAT_FIELDS:
+            v = m.get(f)
+            try:
+                rec[f] = float(v) if v is not None and not (isinstance(v, float) and np.isnan(v)) else 0.0
+            except (TypeError, ValueError):
+                rec[f] = 0.0
+        for f in _LIST_FIELDS:
+            rec[f] = _parse_list(m.get(f))
+
+    # Live multi-API fill for whatever games.csv is missing.
+    needs = (not rec["description"]) or (not _display_cover(rec["cover_url"])) or (not rec["genres"])
+    if enrich and needs:
+        from recommender.enrichment import live_enrich
+
+        extra = live_enrich(name)
+        for f in _STR_FIELDS:
+            if not rec[f]:
+                rec[f] = extra.get(f) or ""
+        for f in _FLOAT_FIELDS:
+            if not rec[f]:
+                rec[f] = extra.get(f) or 0.0
+        for f in _LIST_FIELDS:
+            if not rec[f]:
+                rec[f] = extra.get(f) or []
+
+    rec["cover_url_display"] = _display_cover(rec["cover_url"])
     return rec
 
 
@@ -97,26 +142,48 @@ def recommend(
     filters: dict,
     played_games=None,
     top_n: int = 5,
-    profile_prefilter: bool = True,
+    mode: str = "profile_rl",
     candidate_k: int = 30,
-    igdb=None,
+    enrich: bool = False,
+    profile_prefilter: bool | None = None,
 ) -> list[dict]:
-    """Return up to `top_n` recommendation dicts for the given state + filters."""
+    """Return up to `top_n` recommendation dicts for the given state + filters.
+
+    `mode` is one of MODES. `profile_prefilter` is a legacy alias kept for older
+    callers (True -> "profile_rl", False -> "rl_only"); when given it overrides `mode`.
+    """
+    if profile_prefilter is not None:
+        mode = "profile_rl" if profile_prefilter else "rl_only"
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+
     played = list(played_games or [])
+    n2r = artifacts.name_to_row()
+    played_rows = [n2r[g] for g in played if g in n2r]
+    E = artifacts.embedding_matrix()
+    En = artifacts.embedding_matrix_normalized()
 
     # 1. Candidate set.
-    if profile_prefilter and played:
+    if mode == "profile_rl" and played_rows:
         cand_idx = candidates(filters, played_games=played, k=candidate_k)
+    elif mode == "profile_only" and played_rows:
+        cand_idx = candidates(filters, played_games=played, k=None)
     else:
+        # rl_only, or a profile mode with no usable history -> whole filtered set.
         cand_idx = candidates(filters, played_games=None, k=None)
     if len(cand_idx) == 0:
         return []
 
-    # 2-3. Policy action + cosine rerank over the candidate set.
-    action = _policy_action(state)
-    a_norm = action / max(float(np.linalg.norm(action)), 1e-12)
-    En = artifacts.embedding_matrix_normalized()
-    sims = En[cand_idx] @ a_norm
+    # 2-3. Score the candidates.
+    if mode == "profile_only" and played_rows:
+        # Pure content-based: cosine to the play-history mean profile, no policy.
+        profile = E[played_rows].mean(axis=0)
+        ref = profile / max(float(np.linalg.norm(profile)), 1e-12)
+    else:
+        # Policy modes (and profile_only with no history -> degrade to policy).
+        action = _policy_action(state)
+        ref = action / max(float(np.linalg.norm(action)), 1e-12)
+    sims = En[cand_idx] @ ref
     order = np.argsort(-sims)
 
     # 4-5. Drop played, take top_n, enrich.
@@ -128,7 +195,7 @@ def recommend(
         name = names[row]
         if name in played_set:
             continue
-        results.append(_enrich(name, float(sims[pos]), igdb=igdb))
+        results.append(_enrich(name, float(sims[pos]), enrich=enrich))
         if len(results) == top_n:
             break
     return results

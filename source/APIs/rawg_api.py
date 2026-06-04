@@ -48,6 +48,7 @@ class RAWG:
                 developers=[d.get("name") for d in game_data.get("developers", [])],
                 publishers=[p.get("name") for p in game_data.get("publishers", [])],
                 description=game_data.get("description_raw"),
+                cover_url=[game_data.get("background_image")] if game_data.get("background_image") else [],
             )
             rawg_results.append(rawg_obj)
 

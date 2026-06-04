@@ -3,7 +3,6 @@ import requests
 from dotenv import load_dotenv
 from APIs.api_types import IGDBType
 import datetime
-from urllib.parse import quote
 
 
 class IGDB:
@@ -12,7 +11,7 @@ class IGDB:
         self.client_id = os.getenv("IGDB_CLIENT_ID")
         self.client_secret = os.getenv("IGDB_CLIENT_SECRET")
         self.access_token = None
-        
+
         # Format pattern to get release date 2025-04-24 00:00:00+00:00
         self.format_pattern = "%Y-%m-%d %H:%M:%S+00:00"
 
@@ -51,9 +50,15 @@ class IGDB:
             "Content-Type": "text/plain",
         }
 
+        # IGDB's APICALYPSE query language wants the raw search string with only
+        # backslashes and double-quotes escaped — NOT URL-encoded. Using quote()
+        # here (the old behavior) turned 'The Witcher 3: Wild Hunt' into
+        # 'The%20Witcher%203%3A...' which matched nothing; only punctuation-free
+        # names happened to work.
+        safe_name = game_name.replace("\\", "\\\\").replace('"', '\\"')
         body = f"""
             fields name, game_modes.name, game_type.type, keywords.name, language_supports.language.name, platforms.name, player_perspectives.name, themes.name, rating, summary, first_release_date, genres.name, cover.url;
-            search "{quote(game_name)}";
+            search "{safe_name}";
             limit {max_n};
         """
 
@@ -75,7 +80,7 @@ class IGDB:
                 platforms=[g["name"] for g in game.get("platforms", [])],
                 player_perspectives=[g["name"] for g in game.get("player_perspectives", [])],
                 themes=[g["name"] for g in game.get("themes", [])],
-                igdb_rating=float(game.get("rating")) / 100. if game.get("rating") else 0.0,
+                igdb_rating=float(game.get("rating")) / 100.0 if game.get("rating") else 0.0,
                 release=datetime.datetime.fromtimestamp(int(game.get("first_release_date", "0")), datetime.timezone.utc).strftime("%Y-%m-%d"),
                 genres=[g["name"] for g in game.get("genres", [])],
                 cover_url=[game.get("cover", {}).get("url")],

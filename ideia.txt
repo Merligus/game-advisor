@@ -137,11 +137,20 @@ updates:
     + depois de gerar as features pra cada game, gerar o banco estatico usado pelo algoritmo baseado no estado, ação, recompensa, e terminal com o banco gerado a partir da API do gamespot
     + treinar offline reinforcement learning CQL. instalar d3rlpy + torch
     + testar o treino
-    - montar app no hugginface
-        - frontend
-        - cold start, experiencia inicial pra saber o estado do usuario
-        - baseado no estado, fazer a inferencia do RL treinado
-        - aplicar filtro do usuario
+    + montar app no hugginface
+        + frontend
+        + cold start, experiencia inicial pra saber o estado do usuario
+        + baseado no estado, fazer a inferencia do RL treinado
+        + aplicar filtro do usuario
+        + arrumar cover arts
+        + arrumar descrição dos jogos
+        + arrumar History anchor size (Profile + RL only) e Number of recommendations que estão próximos ao input
+        + no grid de cards das recomendações, mostrar todas as informações dos jogos depois de clickar na art/card.
+        + tirar a listagem abaixo do grid
+        + ao inves de mostrar o match um float, mostra em % 
+        + arrumar latencia do cold start
+        + mark as played das recomendações pra refinar com um botaozinho depois de clickar no card. 
+        + esconder controles dificeis
 
     - atualizar README em todo passo
     

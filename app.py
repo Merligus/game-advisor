@@ -1,9 +1,9 @@
 """Game Advisor — Gradio app (HuggingFace Spaces entry point).
 
-Flow: the user lists games they've played and (optionally) sets year / platform /
-language filters; we build a cold-start state, run the offline-RL policy, and show
-the top-5 recommendations with cover art + descriptions. "Mark as played" folds a
-recommendation back into the history and re-runs.
+Flow: the user searches the catalog for games they've played and (optionally)
+sets year / platform / language filters and a ranking mode; we build a state,
+rank the catalog, and show the top recommendations with cover art + details.
+"Mark as played → refine" folds a suggestion back into the history and re-runs.
 
 Run locally:  python app.py   (serves on http://localhost:7860)
 On HF Spaces this file is the entry point; ship data/policy.pt,
@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "source"))
 import gradio as gr
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw
+from thefuzz import fuzz
 
 from recommender import artifacts
 from recommender.inference import recommend
@@ -36,34 +37,169 @@ ANY_LANG = "(any)"
 LANGUAGES = [ANY_LANG] + [l for l, _ in Counter(l for lst in _idx["language_supports"] for l in lst).most_common()]
 YEAR_MIN, YEAR_MAX = 1975, 2026
 
+# Ranking modes: UI label -> (inference mode, one-line explanation shown with results).
+MODES = {
+    "Profile + RL (recommended)": (
+        "profile_rl",
+        "Kept the games closest to your history, then reranked them with the learned policy.",
+    ),
+    "RL only (trust the policy)": (
+        "rl_only",
+        "Ranked all matching games with the learned policy alone (exposes the policy's raw behavior).",
+    ),
+    "Profile only (no RL)": (
+        "profile_only",
+        "Ranked purely by similarity to your play history — content-based, the policy is not used.",
+    ),
+}
+MODE_LABELS = list(MODES)
+
+# Theme: keep section titles in the default purple, but make interactive
+# *selection* (slider fill, checkbox/radio selected) a brighter purple so it
+# stands out from the titles instead of blending in.
+SELECT_COLOR = "#7c3aed"  # violet-600, a darker selection accent vs the purple titles
+SELECT_TEXT = "#ffffff"  # readable text on the darker chips
+THEME = gr.themes.Soft(primary_hue="purple").set(
+    # Section/block titles stay at primary_500 (purple). These are the actual
+    # variables that color the *selection* surfaces (verified against Gradio's
+    # CSS): slider fill, selected dropdown options, selected radio/checkboxes.
+    slider_color=SELECT_COLOR,
+    slider_color_dark=SELECT_COLOR,
+    checkbox_label_background_fill_selected=SELECT_COLOR,
+    checkbox_label_background_fill_selected_dark=SELECT_COLOR,
+    checkbox_background_color_selected=SELECT_COLOR,
+    checkbox_background_color_selected_dark=SELECT_COLOR,
+)
+# The multiselect chips in the input box use --checkbox-label-background-fill
+# (a neutral, not a theme "selected" variable), so recolor them via CSS. Also
+# add breathing room above the result-sizing sliders and style the detail panel.
+CUSTOM_CSS = f"""
+.gradio-container .token {{
+  background: {SELECT_COLOR} !important;
+  color: {SELECT_TEXT} !important;
+}}
+#result-sizing {{ margin-top: 22px; }}
+#result-sizing .wrap {{ gap: 28px; }}
+#detail-panel {{
+  border: 1px solid var(--border-color-primary);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  background: var(--background-fill-secondary);
+}}
+"""
+
 # Placeholder cover for games whose metadata has no image.
 _PLACEHOLDER = Image.new("RGB", (264, 374), (38, 38, 46))
 ImageDraw.Draw(_PLACEHOLDER).text((132, 187), "no cover art", fill=(150, 150, 160), anchor="mm")
 
 
-def _make_igdb():
-    try:
-        from APIs.igdb_api import IGDB
-
-        return IGDB()
-    except Exception:
-        return None
+def _dedup(seq):
+    return list(dict.fromkeys(x for x in seq if x))
 
 
-def _details_md(recs: list[dict]) -> str:
-    if not recs:
-        return "_No games match those filters. Try widening the year range or platforms._"
-    blocks = []
-    for i, r in enumerate(recs, 1):
-        yr = r["release_year"] or "year unknown"
-        plats = ", ".join(r["platforms"][:6]) if r["platforms"] else "platforms unknown"
-        desc = (r["description"] or "").strip()
-        desc = (desc[:400] + "…") if len(desc) > 400 else desc
-        blocks.append(f"**{i}. {r['name']}**  ·  match {r['score']:.3f}  ·  {yr}\n\n" f"<sub>{plats}</sub>\n\n{desc or '_(no description)_'}")
-    return "\n\n---\n\n".join(blocks)
+def _pct(x):
+    return f"{x * 100:.0f}%" if x and x > 0 else None
 
 
-def _generate(played_inputs, year_min, year_max, platforms, language, use_igdb):
+def _header_md(mode_label, resolved, filters, n_recs):
+    why = MODES[mode_label][1]
+    head = f"**Mode:** {mode_label} — {why}\n\n" f"**History:** {', '.join(resolved) if resolved else '_none (cold start)_'}\n\n" f"**Filters:** year {filters['year_min']}–{filters['year_max']}" f"{' · ' + ', '.join(filters['platforms']) if filters.get('platforms') else ''}" f"{' · ' + filters['language'] if filters.get('language') else ''}"
+    if not n_recs:
+        return head + "\n\n_No games match those filters. Widen the year range or platforms._"
+    return head + f"\n\n**{n_recs} recommendations** — click a cover to see its details."
+
+
+def _card_title(r, rank=None):
+    """Title + headline scores (shown above the play-toggle button)."""
+    yr = r["release_year"] or (r["release"][:4] if r.get("release") else "year unknown")
+    meta_bits = [f"`{r['score']:.0%} match`", str(yr)]
+    crit = _pct(r["metacritic_rating"])
+    usr = _pct(r["user_rating"])
+    if crit:
+        meta_bits.append(f"critics {crit}")
+    if usr:
+        meta_bits.append(f"users {usr}")
+    title = f"### {rank}. {r['name']}" if rank else f"### {r['name']}"
+    return title + "\n\n" + " · ".join(meta_bits)
+
+
+def _card_body(r):
+    """The detailed fields (shown below the play-toggle button)."""
+    parts = []
+    if r["genres"]:
+        parts.append("**Genres:** " + ", ".join(_dedup(r["genres"])[:8]))
+    if r["platforms"]:
+        parts.append("**Platforms:** " + ", ".join(_dedup(r["platforms"])[:8]))
+    devpub = []
+    if r["developers"]:
+        devpub.append("**Developer:** " + ", ".join(_dedup(r["developers"])[:3]))
+    if r["publishers"]:
+        devpub.append("**Publisher:** " + ", ".join(_dedup(r["publishers"])[:3]))
+    if devpub:
+        parts.append(" · ".join(devpub))
+    ttb = []
+    if r["main_story"] > 0:
+        ttb.append(f"main {r['main_story']:.0f}h")
+    if r["main_extra"] > 0:
+        ttb.append(f"+extras {r['main_extra']:.0f}h")
+    if r["completionist"] > 0:
+        ttb.append(f"100% {r['completionist']:.0f}h")
+    if ttb:
+        parts.append("**Time to beat:** " + " · ".join(ttb))
+    if r["language_supports"]:
+        langs = _dedup(r["language_supports"])
+        extra = f" _(+{len(langs) - 8} more)_" if len(langs) > 8 else ""
+        parts.append("**Languages:** " + ", ".join(langs[:8]) + extra)
+    if r["keywords"]:
+        parts.append("**Tags:** " + ", ".join(_dedup(r["keywords"])[:10]))
+    desc = (r["description"] or "").strip()
+    parts.append(desc or "_(no description available)_")
+    return "\n\n".join(parts)
+
+
+_CLICK_PROMPT = "_Select a cover from the grid to see the game's details here._"
+_ADD_LABEL = "＋ I played this — add to history"
+_REMOVE_LABEL = "✓ In your history — click to remove"
+
+
+def _cover_html(r):
+    """Enlarged cover shown at the top of the detail panel (controlled markup, so
+    selecting a cover never triggers the gallery preview's page-scroll)."""
+    url = r.get("cover_url_display")
+    if url:
+        return f'<img src="{url}" alt="cover" ' f'style="max-height:300px;max-width:100%;border-radius:8px;display:block;margin:0 auto;">'
+    return '<div style="height:160px;display:flex;align-items:center;justify-content:center;' 'color:#888;border:1px dashed var(--border-color-primary);border-radius:8px;">no cover art</div>'
+
+
+SEARCH_LIMIT = 50
+
+
+def search_games(selected, evt: gr.KeyUpData):
+    """Server-side fuzzy autocomplete *inside* the single play-history dropdown.
+
+    The catalog has ~26k titles; letting the dropdown hold all of them made its
+    client-side filter laggy on every keystroke. We read the typed text from the
+    key_up event, build a cheap candidate pool (substring, falling back to
+    all-tokens-present), then rank it with thefuzz `WRatio` so the closest titles
+    surface first (e.g. "witcher" -> "The Witcher 3: Wild Hunt"). Already-selected
+    games are kept in the choices so their chips stay valid.
+    """
+    selected = list(selected or [])
+    matches = []
+    q = (evt.input_value or "").strip().lower()
+    if len(q) >= 2:
+        pool = [n for n in ALL_NAMES if q in n.lower()]
+        if len(pool) < 5:  # no/few substring hits -> try all-tokens-present
+            toks = q.split()
+            pool = list(dict.fromkeys(pool + [n for n in ALL_NAMES if all(t in n.lower() for t in toks)]))
+        pool = pool[:3000]  # bound the fuzzy pass for pathological short queries
+        matches = sorted(pool, key=lambda n: fuzz.WRatio(q, n.lower()), reverse=True)[:SEARCH_LIMIT]
+    return gr.update(choices=list(dict.fromkeys(selected + matches)))
+
+
+def _generate(played_inputs, year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live):
+    if year_max < year_min:
+        year_min, year_max = year_max, year_min
     state, resolved = cold_start_state(played_inputs)
     filters = {"year_min": int(year_min), "year_max": int(year_max)}
     if platforms:
@@ -71,68 +207,125 @@ def _generate(played_inputs, year_min, year_max, platforms, language, use_igdb):
     if language and language != ANY_LANG:
         filters["language"] = language
 
-    igdb = _make_igdb() if use_igdb else None
-    recs = recommend(state, filters, played_games=resolved, top_n=5, igdb=igdb)
+    mode = MODES[mode_label][0]
+    recs = recommend(
+        state,
+        filters,
+        played_games=resolved,
+        top_n=int(top_n),
+        mode=mode,
+        candidate_k=int(candidate_k),
+        enrich=bool(enrich_live),
+    )
+    gallery = [(r["cover_url_display"] or _PLACEHOLDER, f"{r['name']} ({r['release_year'] or '?'})") for r in recs]
+    header = _header_md(mode_label, resolved, filters, len(recs))
+    return gallery, recs, header
 
-    gallery = [(r["cover_url"] or _PLACEHOLDER, f"{r['name']} ({r['release_year'] or '?'})") for r in recs]
-    history = ", ".join(resolved) if resolved else "_cold start (no recognized history)_"
-    info = f"**History:** {history}\n\n**Filters:** {filters}"
-    rec_names = [r["name"] for r in recs]
-    return gallery, _details_md(recs), info, gr.update(choices=rec_names, value=[])
+
+def on_recommend(played, year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live):
+    gallery, recs, header = _generate(list(played or []), year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live)
+    # Reset the detail panel: clear cover + title, hide toggle, restore prompt body.
+    return gallery, recs, header, "", "", gr.update(visible=False), _CLICK_PROMPT, None
 
 
-def on_recommend(played, year_min, year_max, platforms, language, use_igdb):
-    return _generate(list(played or []), year_min, year_max, platforms, language, use_igdb)
+def on_select(recs, played, evt: gr.SelectData):
+    """Show the clicked cover (enlarged in the panel) + its info, with the toggle
+    reflecting whether the game is already in history."""
+    if recs and 0 <= evt.index < len(recs):
+        r = recs[evt.index]
+        name = r["name"]
+        in_hist = name in (played or [])
+        label = _REMOVE_LABEL if in_hist else _ADD_LABEL
+        return (_cover_html(r), _card_title(r, rank=evt.index + 1), gr.update(value=label, visible=True), _card_body(r), name)
+    return "", "", gr.update(visible=False), _CLICK_PROMPT, None
 
 
-def on_refine(refine_selected, played, year_min, year_max, platforms, language, use_igdb):
-    merged = list(dict.fromkeys(list(played or []) + list(refine_selected or [])))
-    gallery, details, info, refine_update = _generate(merged, year_min, year_max, platforms, language, use_igdb)
-    # Reflect the folded-in games back into the played dropdown.
-    return gr.update(value=merged), gallery, details, info, refine_update
+def toggle_played(played, name, current_label):
+    """Add or remove the shown game from history, flip the toggle label, and keep
+    the main button labelled 'Refine' while there's any history."""
+    played = list(played or [])
+    if not name:
+        return gr.update(), gr.update(), gr.update()
+    if name in played:
+        played.remove(name)
+        label = _ADD_LABEL
+    else:
+        played.append(name)
+        label = _REMOVE_LABEL
+    main = "Refine" if played else "Recommend"
+    return gr.update(choices=played, value=played), gr.update(value=label), gr.update(value=main)
 
 
 with gr.Blocks(title="Game Advisor") as demo:
-    gr.Markdown("# 🎮 Game Advisor\n" "Offline-RL game recommender. List a few games you've enjoyed, set optional filters, " "and get five suggestions. Use **Mark as played → refine** to fold a suggestion into your " "history and recommend again.")
+    gr.Markdown("# 🎮 Game Advisor\n" "Offline-RL game recommender. Type games you've enjoyed into the search box and hit " "**Recommend**. Click a cover to enlarge it and see the game's details; the toggle next to " "each title adds/removes it from your history so you can refine.")
 
     played_dropdown = gr.Dropdown(
-        ALL_NAMES,
+        [],
         multiselect=True,
         filterable=True,
         label="Games you've played",
-        info="Type to search the catalog; the closest titles appear — pick the ones you've enjoyed.",
+        info="Type at least 2 letters to search the catalog, then pick the games you've played.",
     )
 
-    with gr.Row():
-        year_min = gr.Slider(YEAR_MIN, YEAR_MAX, value=YEAR_MIN, step=1, label="Released from")
-        year_max = gr.Slider(YEAR_MIN, YEAR_MAX, value=YEAR_MAX, step=1, label="Released to")
-    with gr.Row():
+    with gr.Accordion("Filters & ranking options", open=False):
+        with gr.Row():
+            year_min = gr.Slider(YEAR_MIN, YEAR_MAX, value=YEAR_MIN, step=1, label="Released from")
+            year_max = gr.Slider(YEAR_MIN, YEAR_MAX, value=YEAR_MAX, step=1, label="Released to")
         platforms = gr.CheckboxGroup(PLATFORMS, label="Platforms (any of)")
-    with gr.Row():
-        language = gr.Dropdown(LANGUAGES, value=ANY_LANG, label="Language")
-        use_igdb = gr.Checkbox(value=True, label="Fetch cover art live from IGDB (fills missing covers; slower)")
+        with gr.Row():
+            language = gr.Dropdown(LANGUAGES, value=ANY_LANG, label="Language")
+            mode_label = gr.Radio(MODE_LABELS, value=MODE_LABELS[0], label="Ranking mode")
+
+        with gr.Group(elem_id="result-sizing"):
+            gr.Markdown("#### Result sizing")
+            top_n = gr.Slider(3, 12, value=3, step=1, label="Number of recommendations")
+            candidate_k = gr.Slider(
+                10,
+                200,
+                value=30,
+                step=10,
+                label="History anchor size (Profile + RL only)",
+                info="How many history-closest games the policy reranks. Larger = looser anchoring.",
+            )
+        enrich_live = gr.Checkbox(
+            value=True,
+            label="Fetch cover art + descriptions live (RAWG + IGDB; slower, fills gaps in the local data)",
+        )
 
     recommend_btn = gr.Button("Recommend", variant="primary")
-    info_md = gr.Markdown()
-    gallery = gr.Gallery(label="Recommendations", columns=5, height=400, object_fit="contain")
-    details_md = gr.Markdown()
 
+    recs_state = gr.State([])  # full records of the current recommendations
+    selected_name = gr.State(None)  # canonical name of the cover currently shown
+    header_md = gr.Markdown()
     with gr.Row():
-        refine_dropdown = gr.Dropdown([], multiselect=True, label="Mark recommendations as played")
-        refine_btn = gr.Button("Mark as played → refine")
+        with gr.Column(scale=3):
+            # allow_preview=False: clicking a cover only fires `select` (fills the
+            # panel on the right). The built-in preview is off because it scrolls
+            # the page to center the enlarged image; we show the enlarged cover in
+            # the detail panel instead, so the grid stays put and nothing scrolls.
+            gallery = gr.Gallery(label="Recommendations", columns=3, height=460, object_fit="contain", allow_preview=False)
+        with gr.Column(scale=2, elem_id="detail-panel"):
+            cover_html = gr.HTML("")
+            detail_title = gr.Markdown("")
+            played_toggle = gr.Button(_ADD_LABEL, visible=False, size="sm")
+            detail_body = gr.Markdown(_CLICK_PROMPT)
 
-    rec_inputs = [year_min, year_max, platforms, language, use_igdb]
+    # Single-input autocomplete: server-side fuzzy search as the user types.
+    played_dropdown.key_up(search_games, [played_dropdown], [played_dropdown], show_progress="hidden")
+
+    rec_inputs = [year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live]
     recommend_btn.click(
         on_recommend,
         [played_dropdown, *rec_inputs],
-        [gallery, details_md, info_md, refine_dropdown],
+        [gallery, recs_state, header_md, cover_html, detail_title, played_toggle, detail_body, selected_name],
     )
-    refine_btn.click(
-        on_refine,
-        [refine_dropdown, played_dropdown, *rec_inputs],
-        [played_dropdown, gallery, details_md, info_md, refine_dropdown],
+    gallery.select(on_select, [recs_state, played_dropdown], [cover_html, detail_title, played_toggle, detail_body, selected_name])
+    played_toggle.click(
+        toggle_played,
+        [played_dropdown, selected_name, played_toggle],
+        [played_dropdown, played_toggle, recommend_btn],
     )
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=THEME, css=CUSTOM_CSS)

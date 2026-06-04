@@ -1,3 +1,20 @@
+<!--
+HuggingFace Spaces reads the YAML front-matter below to configure the Space.
+It also renders as the Space's README. On GitHub the block shows as a small
+metadata table; that's expected for a repo that is also a HF Space.
+-->
+---
+title: Game Advisor
+emoji: 🎮
+colorFrom: indigo
+colorTo: purple
+sdk: gradio
+sdk_version: 6.15.1
+app_file: app.py
+python_version: "3.11"
+pinned: false
+---
+
 # Game Advisor
 
 ## Install
@@ -122,7 +139,14 @@ A Gradio app at the repo root wires everything together: cold-start questionnair
 python app.py
 ```
 
-Open `http://localhost:7860`. To deploy as a HuggingFace Space, push the repo to a Space with `sdk: gradio`; ship the four artifacts in `data/` (`policy.pt`, `game_embeddings_matrix.npy`, `game_embeddings_index.pkl`, `embedding_scalers.pkl`) and put the IGDB credentials in the Space's secrets.
+Open `http://localhost:7860`. The app has three ranking modes (selectable in the UI): **Profile + RL** (default — keep the games closest to your history, policy reranks them), **RL only** (policy ranks everything), and **Profile only** (pure content-based, no policy).
+
+### Deploying to HuggingFace Spaces
+
+1. The YAML front-matter at the top of this README configures the Space (`sdk: gradio`, `app_file: app.py`, `python_version: "3.11"`).
+2. **Upload the four runtime artifacts** from `data/` — `policy.pt`, `game_embeddings_matrix.npy` (~165 MB), `game_embeddings_index.pkl`, `embedding_scalers.pkl`. They are **gitignored** (so the 165 MB matrix never lands in normal git history), so on the Space either track them with `git lfs` (`git lfs track "*.npy"`) or upload them via the Space's web UI / `huggingface_hub`. The training-only inputs (`reviews.csv`, `games.csv`, the per-embedding pickles) are **not** needed at runtime.
+3. **Set IGDB secrets** in the Space settings: `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` (the live cover-art toggle degrades gracefully to placeholders if absent). `RAWG_API_KEY` / `GAMESPOT_API_KEY` / `METACRITIC_API_KEY` are only needed for the data-collection scripts, not the app.
+4. `requirements.txt` covers the whole pipeline; the Space will also install the training-only `d3rlpy` (its `torch` dependency *is* used at inference, via the TorchScript policy). For a leaner image you can drop `d3rlpy`/`sentence-transformers` from a Space-only requirements file — the app itself only needs `gradio`, `torch`, `pandas`, `numpy`, `scikit-learn`, `thefuzz`, `python-dotenv`, `Pillow`, `requests`.
 
 ## Status & known limitations
 
