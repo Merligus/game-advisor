@@ -1,0 +1,9 @@
+{"endpoint":"https:\/\/www.gamespot.com\/wp-json\/gamespot-api\/v1\/merchants\/deals","primaryGame":{"postId":644362,"gamedbId":691445,"title":"LEGO Batman: Legacy of the Dark Knight"}});
+//# sourceURL=gamespot-api-merchant-context-js-before
+
+https://www.gamespot.com/wp-json/wp/v2/search?search=The%20Legend%20of%20Zelda&per_page=10
+https://www.gamespot.com/wp-json/wp/v2/games/644362
+https://www.gamespot.com/wp-json/wp/v2/genre/588
+https://www.gamespot.com/wp-json/wp/v2/media?parent=559483
+https://www.gamespot.com/wp-json/wp/v2/platform?post=559483
+https://www.gamespot.com/wp-json/wp/v2/theme?post=559483

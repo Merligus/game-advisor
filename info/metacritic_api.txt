@@ -1,0 +1,12 @@
+Reviews:
+    https://backend.metacritic.com/reviews/metacritic/user/games/octopath-traveler-0/summary/web?componentName=user-reviews&componentDisplayName=User+Reviews&componentType=ProductReviewsSummary
+    https://backend.metacritic.com/reviews/metacritic/user/games/octopath-traveler-0/summary/web
+
+User:
+    https://backend.metacritic.com/reviews/metacritic/user/users/Sakumax/web?filterByType=games&offset=0&limit=50&componentName=reviews&componentDisplayName=Profile+Reviews&componentType=ReviewListComponent&sort=score
+    https://backend.metacritic.com/reviews/metacritic/user/users/Sakumax/web?filterByType=games&offset=0&limit=50&componentName=reviews&componentDisplayName=Profile+Reviews&componentType=ReviewListComponent&sort=score
+    https://backend.metacritic.com/reviews/metacritic/user/users/bpgould/web?filterByType=games&offset=0&limit=50&componentName=reviews&componentDisplayName=Profile+Reviews&componentType=ReviewListComponent&sort=score
+
+Outros:
+    https://backend.metacritic.com/composer/metacritic/pages/games/octopath-traveler-0/web
+    https://backend.metacritic.com/finder/metacritic/search/octopath-traveler-0/web?limit=30&offset=0

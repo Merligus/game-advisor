@@ -45,10 +45,9 @@ def _get_clients() -> dict:
         from APIs.metacritic_api import Metacritic
         from APIs.rawg_api import RAWG
 
-        # Gamespot is intentionally omitted: its API now returns an HTML bot
-        # challenge instead of XML, so it yields nothing and spams stdout with
-        # parse errors on every call. The merge below treats it as empty.
-        for key, cls in (("rawg", RAWG), ("igdb", IGDB), ("hltb", HLTB), ("metacritic", Metacritic)):
+        from APIs.gamespot_api import Gamespot
+
+        for key, cls in (("rawg", RAWG), ("igdb", IGDB), ("hltb", HLTB), ("metacritic", Metacritic), ("gamespot", Gamespot)):
             try:
                 _clients[key] = cls()
             except Exception:
@@ -141,7 +140,17 @@ def live_enrich(name: str) -> dict:
     igdb = _search(clients.get("igdb"), name, IGDBType())
     hltb = _search(clients.get("hltb"), name, HLTBType())
     meta = _search(clients.get("metacritic"), name, MetacriticType())
-    gs = GamespotType()  # Gamespot bot-walled (see _get_clients); treated as empty.
+    # Gamespot: call with max_n=1 — each hit requires several follow-up requests
+    # (fetch_game + resolve_terms + fetch_media), so max_n=10 would be ~80 calls.
+    gs_client = clients.get("gamespot")
+    if gs_client is not None:
+        try:
+            gs_res = gs_client.search(name, max_n=1)
+            gs = gs_res[0] if gs_res else GamespotType()
+        except Exception:
+            gs = GamespotType()
+    else:
+        gs = GamespotType()
 
     # Anchor the release year on the first trustworthy hit (RAWG is most reliable).
     anchor = ""
@@ -198,6 +207,7 @@ def live_enrich(name: str) -> dict:
                 igdb.player_perspectives,
                 [rawg.esrb_rating],
                 gs.themes,
+                gs.keywords,
             ]
         ),
     )
