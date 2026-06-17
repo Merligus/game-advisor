@@ -22,13 +22,20 @@ Why IQL and not CQL (the original plan said CQL):
   policy extraction) without that pathology, and is the modern offline-RL
   default for continuous high-dim actions.
 
+Action space (follow-up A): the policy predicts in a low-dim PCA space, not the
+full 1584-d embedding. The *state* stays the full 1584-d running mean of played
+games (max signal), but the *action* target is Z = PCA(E) (D_ACT dims, from
+`build_action_pca.py`). Regressing a 128-d action via AWR collapses far less
+toward the centroid than a 1584-d one. Inference matches the predicted action
+against normalized Z.
+
 Saves:
-  data/policy.pt          TorchScript policy (input dim 1584, output dim 1584)
+  data/policy.pt          TorchScript policy (input dim 1584, output dim D_ACT)
   data/training_log.json  steps, FQE initial-state value, timings, seeds
   d3rlpy_logs/<exp>/      d3rlpy's per-epoch metrics + checkpoints (gitignored)
 
-Reconstructs `actions = E[action_row_idx]` rather than reading materialized
-action vectors — keeps the Stage 2 .npz compact (1.3 GB instead of 2.6 GB).
+Reconstructs `actions = Z[action_row_idx]` (observations come straight from the
+Stage 2 .npz; only the action matrix swapped from E to Z).
 
 Requires d3rlpy + torch. Run from project root.
 """
@@ -58,7 +65,7 @@ HOLDOUT_FRAC = 0.1
 HOLDOUT_MIN_REVIEWS = 5
 BATCH_SIZE = 256
 GAMMA = 0.2
-ACTION_DIM = 1584
+OBS_DIM = 1584  # state dimension (full combined embedding)
 
 # -----------------------------------------------------------------------
 # 1. Reproducibility
@@ -83,13 +90,16 @@ action_row_idx = data["action_row_idx"]
 rewards = data["rewards"].astype(np.float32)
 terminals = data["terminals"].astype(np.float32)
 
-E = np.load("./data/game_embeddings_matrix.npy")
+# Z = PCA-reduced action target (build_action_pca.py). Actions are reduced;
+# observations stay full-dim (built from E in Stage 2).
+Z = np.load("./data/game_actions_reduced.npy")
 index_df = pd.read_pickle("./data/game_embeddings_index.pkl")
-assert E.shape[1] == ACTION_DIM, f"unexpected action dim {E.shape[1]}"
+assert observations.shape[1] == OBS_DIM, f"unexpected obs dim {observations.shape[1]}"
+ACTION_DIM = Z.shape[1]
 
-actions = E[action_row_idx].astype(np.float32)
+actions = Z[action_row_idx].astype(np.float32)
 print(f"  observations: {observations.shape}, dtype={observations.dtype}")
-print(f"  actions:      {actions.shape} (reconstructed from E[action_row_idx])")
+print(f"  actions:      {actions.shape} (reconstructed from Z[action_row_idx], reduced action space)")
 print(f"  rewards:      {rewards.shape}")
 print(f"  terminals:    {terminals.shape}  (sum={int(terminals.sum())})")
 
@@ -201,12 +211,12 @@ print(f"  FQE initial-state value estimate (on holdout): {fqe_value:.4f}")
 # -----------------------------------------------------------------------
 # 8. Sanity check: cold-start state -> top-5 nearest games
 # -----------------------------------------------------------------------
-print("\nSanity check — cold-start state, top-5 by cosine to predicted action:")
-cold_state = np.zeros((1, ACTION_DIM), dtype=np.float32)
+print("\nSanity check — cold-start state, top-5 by cosine to predicted action (Z space):")
+cold_state = np.zeros((1, OBS_DIM), dtype=np.float32)
 predicted_action = iql.predict(cold_state)[0]
-E_norm = E / np.maximum(np.linalg.norm(E, axis=1, keepdims=True), 1e-12)
+Z_norm = Z / np.maximum(np.linalg.norm(Z, axis=1, keepdims=True), 1e-12)
 pred_norm = predicted_action / max(float(np.linalg.norm(predicted_action)), 1e-12)
-sims = E_norm @ pred_norm
+sims = Z_norm @ pred_norm
 names = index_df["name"].values
 for k, idx in enumerate(np.argsort(-sims)[:5]):
     print(f"  {k+1}. {sims[idx]:.4f}  {names[idx]}")
@@ -222,6 +232,8 @@ log = {
     "n_steps_fqe": N_STEPS_FQE,
     "batch_size": BATCH_SIZE,
     "gamma": GAMMA,
+    "obs_dim": OBS_DIM,
+    "action_dim": int(ACTION_DIM),
     "holdout_frac": HOLDOUT_FRAC,
     "holdout_min_reviews": HOLDOUT_MIN_REVIEWS,
     "n_users_total": int(N_users),

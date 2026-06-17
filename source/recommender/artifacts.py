@@ -1,10 +1,12 @@
 """Shared, cached loaders for the inference-time artifacts (Stages 4-6).
 
 Each artifact is read once per process and memoized:
-  embedding_matrix()             E, float32 (N, 1584)
+  embedding_matrix()             E, float32 (N, 1584) — state/profile/candidate space
   embedding_matrix_normalized()  L2-normalized E, for cosine scoring
+  action_matrix()                Z, float32 (N, D_ACT) — PCA action space (policy output)
+  action_matrix_normalized()     L2-normalized Z, for policy-mode cosine scoring
   index_frame()                  the game index DataFrame (Stage 1 output)
-  name_to_row()                  {canonical name: row index into E}
+  name_to_row()                  {canonical name: row index into E/Z}
   policy()                       TorchScript IQL policy, loaded on CPU
 
 Paths resolve relative to this file (<root>/source/app/artifacts.py ->
@@ -32,6 +34,20 @@ def embedding_matrix_normalized() -> np.ndarray:
     E = embedding_matrix()
     norms = np.maximum(np.linalg.norm(E, axis=1, keepdims=True), 1e-12)
     return (E / norms).astype(np.float32)
+
+
+@lru_cache(maxsize=1)
+def action_matrix() -> np.ndarray:
+    """Z = PCA-reduced per-game embedding (build_action_pca.py). This is the
+    space the policy predicts in, so policy-mode reranking matches against it."""
+    return np.load(DATA_DIR / "game_actions_reduced.npy")
+
+
+@lru_cache(maxsize=1)
+def action_matrix_normalized() -> np.ndarray:
+    Z = action_matrix()
+    norms = np.maximum(np.linalg.norm(Z, axis=1, keepdims=True), 1e-12)
+    return (Z / norms).astype(np.float32)
 
 
 @lru_cache(maxsize=1)

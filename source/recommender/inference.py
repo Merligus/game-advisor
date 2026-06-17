@@ -174,16 +174,18 @@ def recommend(
     if len(cand_idx) == 0:
         return []
 
-    # 2-3. Score the candidates.
+    # 2-3. Score the candidates. profile_only matches in the full embedding space
+    # (E); policy modes match in the reduced PCA action space (Z) the policy
+    # predicts in.
     if mode == "profile_only" and played_rows:
-        # Pure content-based: cosine to the play-history mean profile, no policy.
         profile = E[played_rows].mean(axis=0)
         ref = profile / max(float(np.linalg.norm(profile)), 1e-12)
+        space = En
     else:
-        # Policy modes (and profile_only with no history -> degrade to policy).
         action = _policy_action(state)
         ref = action / max(float(np.linalg.norm(action)), 1e-12)
-    sims = En[cand_idx] @ ref
+        space = artifacts.action_matrix_normalized()
+    sims = space[cand_idx] @ ref
     order = np.argsort(-sims)
 
     # 4-5. Drop played, take top_n, enrich.
