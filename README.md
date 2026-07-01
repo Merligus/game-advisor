@@ -1,8 +1,3 @@
-<!--
-HuggingFace Spaces reads the YAML front-matter below to configure the Space.
-It also renders as the Space's README. On GitHub the block shows as a small
-metadata table; that's expected for a repo that is also a HF Space.
--->
 ---
 title: Game Advisor
 emoji: 🎮
@@ -14,6 +9,13 @@ app_file: app.py
 python_version: "3.11"
 pinned: false
 ---
+
+<!--
+HuggingFace Spaces reads the YAML front-matter above to configure the Space —
+it must be the very first thing in the file. It also renders as the Space's
+README. On GitHub the block shows as a small metadata table; that's expected
+for a repo that is also a HF Space.
+-->
 
 # Game Advisor
 
@@ -145,8 +147,8 @@ Open `http://localhost:7860`. The app has three ranking modes (selectable in the
 ### Deploying to HuggingFace Spaces
 
 1. The YAML front-matter at the top of this README configures the Space (`sdk: gradio`, `app_file: app.py`, `python_version: "3.11"`).
-2. **Upload the four runtime artifacts** from `data/` — `policy.pt`, `game_embeddings_matrix.npy` (~165 MB), `game_embeddings_index.pkl`, `embedding_scalers.pkl`. They are **gitignored** (so the 165 MB matrix never lands in normal git history), so on the Space either track them with `git lfs` (`git lfs track "*.npy"`) or upload them via the Space's web UI / `huggingface_hub`. The training-only inputs (`reviews.csv`, `games.csv`, the per-embedding pickles) are **not** needed at runtime.
-3. **Set IGDB secrets** in the Space settings: `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` (the live cover-art toggle degrades gracefully to placeholders if absent). `RAWG_API_KEY` / `GAMESPOT_API_KEY` / `METACRITIC_API_KEY` are only needed for the data-collection scripts, not the app.
+2. **Upload the six runtime artifacts** from `data/` — `policy.pt`, `game_embeddings_matrix.npy` (~165 MB), `game_actions_reduced.npy` (the PCA action space the policy predicts in), `game_embeddings_index.pkl`, `embedding_scalers.pkl`, and `games.csv` (~27 MB — read at recommendation time for cover/description metadata). They are **gitignored** (so the big files never land in normal git history), so on the Space either track them with `git lfs` (`git lfs track "*.npy" "*.csv" "*.pkl" "*.pt"`) or upload them via the Space's web UI / `huggingface_hub`. `reviews.csv` and the per-embedding pickles are training-only — not needed at runtime.
+3. **Set the live-enrichment secrets** in the Space settings: `RAWG_API_KEY`, `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET`, `METACRITIC_API_KEY` — `recommender/enrichment.py` queries those APIs at recommendation time to fill missing covers/descriptions (each degrades gracefully to placeholders if absent; HLTB needs no key). Only `GAMESPOT_API_KEY` is data-collection-only.
 4. `requirements.txt` covers the whole pipeline; the Space will also install the training-only `d3rlpy` (its `torch` dependency *is* used at inference, via the TorchScript policy). For a leaner image you can drop `d3rlpy`/`sentence-transformers` from a Space-only requirements file — the app itself only needs `gradio`, `torch`, `pandas`, `numpy`, `scikit-learn`, `thefuzz`, `python-dotenv`, `Pillow`, `requests`.
 
 ## Status & known limitations
