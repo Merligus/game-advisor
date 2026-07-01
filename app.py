@@ -88,6 +88,54 @@ CUSTOM_CSS = f"""
 }}
 """
 
+# Gradio's Dropdown doesn't scroll the highlighted option into view during
+# keyboard navigation, so arrowing moves the highlight through off-screen items.
+# This on-load hook scrolls the active option into view on arrow keys
+# (block:'nearest' = minimal scroll, no jarring recenter).
+# Scroll-follow for dropdown keyboard navigation.
+#
+# Verified against Gradio's compiled Dropdown JS (Dropdown-B9BMXBuu.js):
+#   - the highlighted <li> gets class "active" (all options are rendered; no
+#     virtualization), and
+#   - the component's only native scrollTo runs when the list *opens* (to show
+#     the selected item) — nothing keeps the highlight visible while arrowing,
+#     so it walks off-screen. This shim fills exactly that gap.
+#
+# The app may mount inside <gradio-app>'s shadow root, where document-level
+# querySelector / MutationObserver silently see nothing (why earlier attempts
+# did nothing). So we search both document and the shadow root, and attach via
+# a cheap poll instead of a DOM-added observer — immune to portal/shadow
+# surprises; near-zero work when no dropdown is open. Injected via <head> (not
+# launch(js=...)) so execution doesn't depend on Gradio's js hook. Scrolling
+# uses block:'nearest' — a no-op when the item is already visible, so mouse
+# hover never jiggles the list.
+KEYNAV_HEAD = """
+<script>
+(function () {
+  const hook = (list) => {
+    if (list.__keynav) return;
+    list.__keynav = true;
+    const scroll = () =>
+      list.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+    new MutationObserver(scroll).observe(list, {
+      attributes: true, attributeFilter: ['class'], childList: true, subtree: true,
+    });
+    scroll();
+  };
+  const roots = () => {
+    const r = [document];
+    const sr = document.querySelector('gradio-app')?.shadowRoot;
+    if (sr) r.push(sr);
+    return r;
+  };
+  setInterval(
+    () => roots().forEach((rt) => rt.querySelectorAll('ul.options').forEach(hook)),
+    300
+  );
+})();
+</script>
+"""
+
 # Placeholder cover for games whose metadata has no image.
 _PLACEHOLDER = Image.new("RGB", (264, 374), (38, 38, 46))
 ImageDraw.Draw(_PLACEHOLDER).text((132, 187), "no cover art", fill=(150, 150, 160), anchor="mm")
@@ -171,7 +219,21 @@ def _cover_html(r):
     return '<div style="height:160px;display:flex;align-items:center;justify-content:center;' 'color:#888;border:1px dashed var(--border-color-primary);border-radius:8px;">no cover art</div>'
 
 
-SEARCH_LIMIT = 50
+# Top fuzzy matches fed into the dropdown. Kept small on purpose: the popup
+# shows a handful of rows and navigation is nicer over a short, high-precision
+# list — typing one more letter narrows better than arrowing through dozens.
+SEARCH_LIMIT = 20
+
+
+# Keys that navigate/commit within the open dropdown rather than change the
+# query text. key_up fires on ALL keys, and re-emitting `choices` on these
+# re-renders the list and snaps the highlight back to the top — so pressing the
+# arrows to pick a match felt like the list kept resetting. We skip re-filtering
+# for these and leave the dropdown untouched (gr.skip()).
+_NAV_KEYS = {
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape", "Tab",
+    "Home", "End", "PageUp", "PageDown", "Shift", "Control", "Alt", "Meta", "CapsLock",
+}
 
 
 def search_games(selected, evt: gr.KeyUpData):
@@ -184,6 +246,9 @@ def search_games(selected, evt: gr.KeyUpData):
     surface first (e.g. "witcher" -> "The Witcher 3: Wild Hunt"). Already-selected
     games are kept in the choices so their chips stay valid.
     """
+    # Don't re-filter (and reset the highlight) on arrow/enter/etc. navigation.
+    if evt.key in _NAV_KEYS:
+        return gr.skip()
     selected = list(selected or [])
     matches = []
     q = (evt.input_value or "").strip().lower()
@@ -259,10 +324,17 @@ def toggle_played(played, name, current_label):
 with gr.Blocks(title="Game Advisor") as demo:
     gr.Markdown("# 🎮 Game Advisor\n" "Offline-RL game recommender. Type games you've enjoyed into the search box and hit " "**Recommend**. Click a cover to enlarge it and see the game's details; the toggle next to " "each title adds/removes it from your history so you can refine.")
 
+    # allow_custom_value=True: because this dropdown's choices are live-swapped
+    # on every keystroke, a selection can race a swap and submit a value the
+    # server-side choices no longer contain — Dropdown.preprocess then throws
+    # "Value: ... is not in the list of choices" as an error toast. Custom-value
+    # mode skips that validation (the race becomes harmless), and any custom or
+    # typo entry is fuzzy-resolved (or dropped) by state_builder.cold_start_state.
     played_dropdown = gr.Dropdown(
         [],
         multiselect=True,
         filterable=True,
+        allow_custom_value=True,
         label="Games you've played",
         info="Type at least 2 letters to search the catalog, then pick the games you've played.",
     )
@@ -278,7 +350,7 @@ with gr.Blocks(title="Game Advisor") as demo:
 
         with gr.Group(elem_id="result-sizing"):
             gr.Markdown("#### Result sizing")
-            top_n = gr.Slider(3, 12, value=3, step=1, label="Number of recommendations")
+            top_n = gr.Slider(3, 12, value=10, step=1, label="Number of recommendations")
             candidate_k = gr.Slider(
                 10,
                 200,
@@ -311,7 +383,11 @@ with gr.Blocks(title="Game Advisor") as demo:
             detail_body = gr.Markdown(_CLICK_PROMPT)
 
     # Single-input autocomplete: server-side fuzzy search as the user types.
-    played_dropdown.key_up(search_games, [played_dropdown], [played_dropdown], show_progress="hidden")
+    # trigger_mode="always_last": collapse a burst of keystrokes into one search,
+    # so stale responses from earlier keys can't re-render the list (and reset the
+    # highlight) after the user has started arrow-navigating.
+    played_dropdown.key_up(search_games, [played_dropdown], [played_dropdown],
+                           show_progress="hidden", trigger_mode="always_last")
 
     rec_inputs = [year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live]
     recommend_btn.click(
@@ -328,4 +404,4 @@ with gr.Blocks(title="Game Advisor") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, theme=THEME, css=CUSTOM_CSS)
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=THEME, css=CUSTOM_CSS, head=KEYNAV_HEAD)
