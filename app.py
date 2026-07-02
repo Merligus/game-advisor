@@ -404,4 +404,11 @@ with gr.Blocks(title="Game Advisor") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, theme=THEME, css=CUSTOM_CSS, head=KEYNAV_HEAD)
+    # ssr_mode=False: HF Spaces enables Gradio's Node-SSR by default
+    # (GRADIO_SSR_MODE=true). Under SSR the served page never delivered the
+    # dropdown's key_up events (typing showed no suggestions), while the same
+    # event posted straight to /gradio_api/queue/join returned choices fine —
+    # i.e. backend healthy, SSR frontend broken. SSR only speeds first paint,
+    # so pin it off; the explicit param overrides the Space's env default.
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=THEME, css=CUSTOM_CSS,
+                head=KEYNAV_HEAD, ssr_mode=False)
