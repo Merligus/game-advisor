@@ -255,5 +255,78 @@ def main():
     print(f"\ngames.csv written ({len(games)} rows). Done.")
 
 
+# Block layout of a combined-embedding row (build_combined_embeddings.py).
+_TITLE = slice(0, 768)
+_DESC = slice(768, 1536)
+_TEXT = slice(0, 1536)   # title+desc (both L2'd) — the kNN similarity space
+_TAGS = slice(1536, 1568)
+_COLLAB = slice(1568, 1576)
+# Rows below this index are referenced by mdp_dataset.npz / were present at
+# training time — they must never be rewritten (policy validity).
+N_PROTECTED = 26120
+
+
+def reimpute_tail(k_tail: int, knn: int = 10):
+    """Upgrade the tags/collab blocks of the last `k_tail` appended rows from
+    the global-mean imputation to a kNN imputation: the mean of those blocks
+    over the game's `knn` nearest *text* neighbors (title+desc cosine),
+    skipping neighbors that are themselves mean-imputed. Global-mean blocks
+    make every added game equidistant in 2 of 4 similarity blocks, which lets
+    title-token junk ("War of the Worlds" for "God of War (2018)") crowd the
+    neighborhoods; kNN blocks restore genre signal. Z rows are recomputed via
+    the frozen PCA. Protected (training-time) rows are never touched.
+    """
+    E = np.load(DATA / "game_embeddings_matrix.npy")
+    Z = np.load(DATA / "game_actions_reduced.npy")
+    idx = pd.read_pickle(DATA / "game_embeddings_index.pkl")
+    with open(DATA / "embedding_scalers.pkl", "rb") as fh:
+        scalers = pickle.load(fh)
+    with open(DATA / "action_pca.pkl", "rb") as fh:
+        pca = pickle.load(fh)
+
+    start = len(E) - k_tail
+    assert start >= N_PROTECTED, f"refusing: tail reaches into protected rows (<{N_PROTECTED})"
+
+    def l2(v):
+        return (v / max(float(np.linalg.norm(v)), 1e-12)).astype(np.float32)
+
+    imput_tags = l2(scalers["block_means"]["tags"])
+    imput_collab = l2(scalers["block_means"]["collab"])
+    ref = E[:start]
+    ref_text = ref[:, _TEXT]
+    real_tags = ~np.all(np.isclose(ref[:, _TAGS], imput_tags, atol=1e-6), axis=1)
+    real_collab = ~np.all(np.isclose(ref[:, _COLLAB], imput_collab, atol=1e-6), axis=1)
+    names = idx["name"].tolist()
+
+    E_new = E.copy()
+    for r in range(start, len(E)):
+        sims = ref_text @ E[r, _TEXT]
+        order = np.argsort(-sims)
+        nb_tags = [i for i in order if real_tags[i]][:knn]
+        nb_collab = [i for i in order if real_collab[i]][:knn]
+        if nb_tags:
+            E_new[r, _TAGS] = l2(ref[nb_tags, _TAGS].mean(axis=0))
+        if nb_collab:
+            E_new[r, _COLLAB] = l2(ref[nb_collab, _COLLAB].mean(axis=0))
+        print(f"  {names[r]!r}: tags<-{[names[i] for i in nb_tags[:4]]}")
+
+    assert np.array_equal(E_new[:start], E[:start]), "protected rows changed — aborting"
+    Z_new = Z.copy()
+    Z_new[start:] = pca.transform(E_new[start:]).astype(Z.dtype)
+    np.save(DATA / "game_embeddings_matrix.npy", E_new)
+    np.save(DATA / "game_actions_reduced.npy", Z_new)
+    print(f"reimputed rows {start}..{len(E)-1}; protected prefix byte-identical")
+
+    En = E_new / np.maximum(np.linalg.norm(E_new, axis=1, keepdims=True), 1e-12)
+    print("\n=== sanity: cosine top-5 per reimputed game ===")
+    for r in range(start, len(E)):
+        sims = En @ En[r]
+        top = [names[i] for i in np.argsort(-sims) if i != r][:5]
+        print(f"  {names[r]!r}: {top}")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 2 and sys.argv[1] == "--reimpute-tail":
+        reimpute_tail(int(sys.argv[2]))
+    else:
+        main()

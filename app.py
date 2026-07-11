@@ -299,21 +299,36 @@ def _generate(played_inputs, year_min, year_max, platforms, language, mode_label
     return gallery, recs, header
 
 
+def _panel_for(r, rank, played):
+    """The 5 detail-panel outputs (cover, title, toggle, body, selected name)."""
+    label = _REMOVE_LABEL if r["name"] in (played or []) else _ADD_LABEL
+    return (_cover_html(r), _card_title(r, rank=rank),
+            gr.update(value=label, visible=True), _card_body(r), r["name"])
+
+
 def on_recommend(played, year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live):
-    gallery, recs, header = _generate(list(played or []), year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live)
-    # Reset the detail panel: clear cover + title, hide toggle, restore prompt body.
-    return gallery, recs, header, "", "", gr.update(visible=False), _CLICK_PROMPT, None
+    played = list(played or [])
+    gallery, recs, header = _generate(played, year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live)
+    # Auto-select recommendation #1: the panel (and its play-toggle) is always
+    # populated right after recommending, and the gallery's selected_index is
+    # explicitly reset — otherwise the component keeps the previous run's
+    # selection and clicking the same tile position never fires `select`.
+    if recs:
+        panel = _panel_for(recs[0], 1, played)
+        return gr.update(value=gallery, selected_index=0), recs, header, *panel
+    return gr.update(value=gallery, selected_index=None), recs, header, "", "", gr.update(visible=False), _CLICK_PROMPT, None
 
 
 def on_select(recs, played, evt: gr.SelectData):
     """Show the clicked cover (enlarged in the panel) + its info, with the toggle
     reflecting whether the game is already in history."""
+    # Clicking the already-selected tile fires a deselect (selected=False):
+    # keep the panel as-is instead of blanking it (which read as "the button
+    # disappeared after the first click").
+    if not getattr(evt, "selected", True):
+        return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
     if recs and 0 <= evt.index < len(recs):
-        r = recs[evt.index]
-        name = r["name"]
-        in_hist = name in (played or [])
-        label = _REMOVE_LABEL if in_hist else _ADD_LABEL
-        return (_cover_html(r), _card_title(r, rank=evt.index + 1), gr.update(value=label, visible=True), _card_body(r), name)
+        return _panel_for(recs[evt.index], evt.index + 1, played)
     return "", "", gr.update(visible=False), _CLICK_PROMPT, None
 
 
