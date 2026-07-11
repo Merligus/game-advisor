@@ -71,7 +71,23 @@ def _preload_names() -> list[str]:
     # sparse column.
     score = coverage + 4.0 * (df["user_rating"] + df["metacritic_rating"])
     top = sorted(zip(df.index, score.values), key=lambda r: r[1], reverse=True)[:N_PRELOAD]
-    return [r[0] for r in top]
+    names = [r[0] for r in top]
+
+    # Pins: catalog names matched by the famous-games audit
+    # (scripts/audit_catalog.py writes data/preload_pins.json). Guarantees a
+    # famous game is never hidden by a weak blended score — some rows
+    # (review-bombed user scores, thin metadata) can't be lifted by any
+    # reasonable top-N cutoff. Missing/invalid pins file degrades to top-N only.
+    try:
+        import json as _json
+
+        pins = _json.loads((artifacts.DATA_DIR / "preload_pins.json").read_text())
+        known = set(_idx["name"])
+        have = set(names)
+        names += [p for p in pins if p in known and p not in have]
+    except (FileNotFoundError, ValueError):
+        pass
+    return names
 
 
 PRELOAD_NAMES = _preload_names()

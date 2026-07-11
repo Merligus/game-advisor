@@ -8,6 +8,7 @@
 *.json
 *.pt
 *.h5
+*.bak
 d3rlpy_logs/
 
 !gamespot_reviews.csv

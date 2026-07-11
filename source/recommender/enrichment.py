@@ -64,10 +64,42 @@ _EDITION_RE = re.compile(
 )
 
 
+# Parenthetical years are disambiguation metadata, not part of the title:
+# "God of War (2018)" must compare equal to "God of War" on the name axis
+# (the year itself is checked separately via the release anchor).
+_PAREN_YEAR_RE = re.compile(r"\(\s*(19|20)\d{2}\s*\)")
+
+# Standalone roman-numeral tokens -> arabic, so "God of War II" vs
+# "God of War III" (or "GTA V" vs "GTA 5") compare on the same number axis.
+# i/v/x are included when they are whole tokens; the rare true-letter title
+# ("Mega Man X") pays a small ambiguity cost for systematic franchise safety.
+_ROMAN = {
+    "i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7",
+    "viii": "8", "ix": "9", "x": "10", "xi": "11", "xii": "12", "xiii": "13",
+    "xiv": "14", "xv": "15", "xvi": "16", "xvii": "17", "xviii": "18",
+    "xix": "19", "xx": "20",
+}
+_ROMAN_RE = re.compile(r"\b(" + "|".join(sorted(_ROMAN, key=len, reverse=True)) + r")\b")
+
+
 def _normalize(s: str) -> str:
-    s = _EDITION_RE.sub(" ", (s or "").lower())
+    s = _PAREN_YEAR_RE.sub(" ", (s or "").lower())
+    s = _EDITION_RE.sub(" ", s)
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    s = _ROMAN_RE.sub(lambda m: _ROMAN[m.group(1)], s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def _numbers(s: str) -> frozenset:
+    """Numeric tokens of the normalized title — the sequel/edition number axis.
+
+    Titles whose number sets differ are different games no matter how similar
+    the words are: "god of war 2" != "god of war 3", "god of war" != "god of
+    war 1", "final fantasy 10" != "final fantasy 10 2". High fuzzy ratios on
+    numbered franchises are exactly how the original batch merge lost God of
+    War II into the God of War III row.
+    """
+    return frozenset(re.findall(r"\d+", _normalize(s)))
 
 
 def _name_ratio(a: str, b: str) -> float:
@@ -90,16 +122,6 @@ def _year(date_s) -> int | None:
 def _release_close(a, b) -> bool:
     ya, yb = _year(a), _year(b)
     return ya is not None and yb is not None and abs(ya - yb) <= 1
-
-
-def _search(client, name, empty):
-    if client is None:
-        return empty
-    try:
-        res = client.search(name, max_n=1)
-        return res[0] if res else empty
-    except Exception:
-        return empty
 
 
 def _get_first_string(values):
@@ -133,36 +155,66 @@ def _get_union(lists):
 
 
 @lru_cache(maxsize=4096)
-def live_enrich(name: str) -> dict:
-    """Full merged GameType metadata for `name` across all APIs (cached)."""
-    clients = _get_clients()
-    rawg = _search(clients.get("rawg"), name, RAWGType())
-    igdb = _search(clients.get("igdb"), name, IGDBType())
-    hltb = _search(clients.get("hltb"), name, HLTBType())
-    meta = _search(clients.get("metacritic"), name, MetacriticType())
-    # Gamespot: call with max_n=1 — each hit requires several follow-up requests
-    # (fetch_game + resolve_terms + fetch_media), so max_n=10 would be ~80 calls.
-    gs_client = clients.get("gamespot")
-    if gs_client is not None:
-        try:
-            gs_res = gs_client.search(name, max_n=1)
-            gs = gs_res[0] if gs_res else GamespotType()
-        except Exception:
-            gs = GamespotType()
-    else:
-        gs = GamespotType()
+def live_enrich(name: str, anchor_year: int | None = None) -> dict:
+    """Full merged GameType metadata for `name` across all APIs (cached).
 
-    # Anchor the release year on the first trustworthy hit (RAWG is most reliable).
-    anchor = ""
-    for cand in (rawg, igdb, meta, hltb):
-        if _name_ratio(cand.name, name) > 0.7 and cand.release:
-            anchor = cand.release
-            break
+    `anchor_year` (repair/disambiguation mode): when given, it *is* the release
+    anchor and a dated candidate must be within ±1 year of it — even a perfect
+    name match can't override ("God of War" 2005 vs 2018 are name-identical).
+    """
+    clients = _get_clients()
+    # Repair mode (anchor_year given) fetches a few candidates per API and keeps
+    # the first that passes the guard: for name-identical pairs the top search
+    # hit is often the *wrong* year (rankings favor the newest/most popular
+    # entry), and top-1-only would silently drop the whole source. Runtime
+    # enrichment keeps top-1 — cheap, and there's no year to arbitrate with.
+    K = 5 if anchor_year is not None else 1
+
+    def fetch(key, max_n):
+        client = clients.get(key)
+        if client is None:
+            return []
+        try:
+            return client.search(name, max_n=max_n) or []
+        except Exception:
+            return []
+
+    rawg_cands = fetch("rawg", K)
+    igdb_cands = fetch("igdb", K)
+    hltb_cands = fetch("hltb", K)
+    meta_cands = fetch("metacritic", K)
+    # Gamespot: always max_n=1 — each hit requires several follow-up requests
+    # (fetch_game + resolve_terms + fetch_media), so max_n=5 would be ~40 calls.
+    gs_cands = fetch("gamespot", 1)
+
+    # Anchor the release year: an explicit anchor_year (repair mode) wins;
+    # otherwise use the first trustworthy hit (RAWG first). The sequel-number
+    # veto applies to anchor selection too — never anchor on a wrong sequel.
+    if anchor_year is not None:
+        anchor = f"{anchor_year}-01-01"
+    else:
+        anchor = ""
+        firsts = [c[0] for c in (rawg_cands, igdb_cands, meta_cands, hltb_cands) if c]
+        for cand in firsts:
+            if _numbers(cand.name) != _numbers(name):
+                continue
+            if _name_ratio(cand.name, name) > 0.7 and cand.release:
+                anchor = cand.release
+                break
 
     def accept(obj, empty):
         if obj is None or not obj.name:
             return empty
+        # Different sequel/edition numbers = different games, at any ratio.
+        if _numbers(obj.name) != _numbers(name):
+            return empty
         r = _name_ratio(obj.name, name)
+        if anchor_year is not None:
+            # Explicit year: dated candidates must match it; undated ones need
+            # a stricter name match (we can't disprove them by year).
+            if _year(obj.release) is None:
+                return obj if r > MIN_RATIO_NO_ANCHOR else empty
+            return obj if (r > MIN_RATIO and _release_close(obj.release, anchor)) else empty
         if r > GOOD_RATIO:
             return obj
         if anchor:
@@ -172,17 +224,32 @@ def live_enrich(name: str) -> dict:
             return obj
         return empty
 
-    rawg = accept(rawg, RAWGType())
-    igdb = accept(igdb, IGDBType())
-    hltb = accept(hltb, HLTBType())
-    meta = accept(meta, MetacriticType())
-    gs = accept(gs, GamespotType())
+    def pick(cands, empty):
+        for c in cands:
+            got = accept(c, None)
+            if got is not None:
+                return got
+        return empty
+
+    rawg = pick(rawg_cands, RAWGType())
+    igdb = pick(igdb_cands, IGDBType())
+    hltb = pick(hltb_cands, HLTBType())
+    meta = pick(meta_cands, MetacriticType())
+    gs = pick(gs_cands, GamespotType())
+
+    # Release: with an explicit anchor_year the anchor is synthetic (Jan 1), so
+    # real accepted release dates win and the anchor is only a fallback;
+    # otherwise the anchor IS a real date from the anchor-pick loop and leads.
+    if anchor_year is not None:
+        release = _get_first_string([g.release for g in (rawg, igdb, meta, hltb)] + [anchor])
+    else:
+        release = _get_first_string([anchor] + [g.release for g in (rawg, igdb, meta, hltb)])
 
     # Field-merge with the same source priorities as create_game_dataset.py.
     merged = GameType(
         real_name=name,
         name=_get_first_string([g.name for g in (gs, rawg, igdb, hltb, meta)]) or name,
-        release=_get_first_string([anchor] + [g.release for g in (rawg, igdb, meta, hltb)]),
+        release=release,
         rawg_rating=rawg.rawg_rating,
         igdb_rating=igdb.igdb_rating,
         hltb_rating=hltb.hltb_rating,
