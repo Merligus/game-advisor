@@ -345,7 +345,11 @@ def toggle_played(played, name, current_label):
         played.append(name)
         label = _REMOVE_LABEL
     main = "Refine" if played else "Recommend"
-    return gr.update(choices=played, value=played), gr.update(value=label), gr.update(value=main)
+    # Update ONLY the value — the choices are the preloaded searchable catalog
+    # (PRELOAD_NAMES + pins) and must never be overwritten, or the search list
+    # goes blank after the first toggle. Games not in the preload (e.g. a
+    # recommended long-tail title) stay valid as chips via allow_custom_value.
+    return gr.update(value=played), gr.update(value=label), gr.update(value=main)
 
 
 with gr.Blocks(title="Game Advisor") as demo:
