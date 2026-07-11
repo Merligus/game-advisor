@@ -73,20 +73,24 @@ def _preload_names() -> list[str]:
     top = sorted(zip(df.index, score.values), key=lambda r: r[1], reverse=True)[:N_PRELOAD]
     names = [r[0] for r in top]
 
-    # Pins: catalog names matched by the famous-games audit
-    # (scripts/audit_catalog.py writes data/preload_pins.json). Guarantees a
-    # famous game is never hidden by a weak blended score — some rows
-    # (review-bombed user scores, thin metadata) can't be lifted by any
-    # reasonable top-N cutoff. Missing/invalid pins file degrades to top-N only.
-    try:
-        import json as _json
+    # Pins guarantee dropdown presence regardless of the blended score:
+    #  - preload_pins.json          famous games matched by scripts/audit_catalog.py
+    #    (some rows — review-bombed scores, thin metadata — can't clear any top-N cutoff)
+    #  - preload_pins_updater.json  games appended by scripts/update_games.py
+    #    (fresh releases whose early metadata is too thin to rank)
+    # Missing/invalid pin files degrade to top-N only.
+    import json as _json
 
-        pins = _json.loads((artifacts.DATA_DIR / "preload_pins.json").read_text())
-        known = set(_idx["name"])
-        have = set(names)
-        names += [p for p in pins if p in known and p not in have]
-    except (FileNotFoundError, ValueError):
-        pass
+    known = set(_idx["name"])
+    have = set(names)
+    for pins_file in ("preload_pins.json", "preload_pins_updater.json"):
+        try:
+            pins = _json.loads((artifacts.DATA_DIR / pins_file).read_text())
+        except (FileNotFoundError, ValueError):
+            continue
+        extra = [p for p in pins if p in known and p not in have]
+        names += extra
+        have.update(extra)
     return names
 
 

@@ -1,25 +1,28 @@
-"""Catalog repair: add missing famous games + refresh sparse rows, then append
-the new games to the runtime artifacts without invalidating the trained policy.
+"""Catalog repair library + CLI: add missing games / refresh sparse rows, then
+append new games to the runtime artifacts without invalidating the trained
+policy.
 
-Consumes data/catalog_audit.json (audit_catalog.py) plus the manual ADD triage
-below. Two operations:
+Library (imported by update_games.py):
+  Catalog          in-memory handle on games.csv + E/index/Z + frozen transforms
+  ensure_backups() one-time .bak copies in data/
+  fetch_game()     live_enrich(query, anchor_year) + validation -> dict | None
+  refresh_row()    fill ONLY empty/zero fields of an existing games.csv row
+  append_games()   new games.csv rows + E/index/Z rows via FROZEN transforms
+  save_catalog()   persist with byte-identity asserts on the protected prefix
+  reimpute_tail()  upgrade appended rows' tags/collab blocks to kNN imputation
 
-  REFRESH (SPARSE/HIDDEN rows): live_enrich(matched_name, anchor_year) and fill
-  ONLY empty/zero fields of the existing games.csv row — never overwrites real
-  data, never touches E/index (the row's embedding stays as built). Better
-  preload score + richer cards, zero artifact churn.
+Frozen-transform invariant: rows 0..N_PROTECTED-1 are referenced by
+mdp_dataset.npz / were present at training time; every save asserts they are
+byte-identical, so policy.pt, the MDP and the PCA action space stay valid — no
+retrain. New rows: title/description = live SBERT; tags/collab = kNN over text
+neighbors (via reimpute_tail, run automatically after appends); scalars = saved
+median/p99/min-max params.
 
-  ADD (MISSING + corrupted-merge SUSPECTs): live_enrich(query, anchor_year) ->
-  new games.csv row + new rows appended to the artifacts with FROZEN transforms:
-    - title/description blocks: live SBERT (all-mpnet-base-v2), L2 per block;
-    - tags/collab blocks: L2 of the saved per-block imputation means
-      (embedding_scalers.pkl) — the SVD models/vocab were never persisted, and
-      this matches the ~25% of existing rows that are mean-imputed;
-    - scalars: saved median-impute -> p99 clip (ttb) -> min-max -> /sqrt(8).
-  Existing E/Z rows stay byte-identical (asserted before saving), so policy.pt,
-  mdp_dataset.npz and the PCA action space all remain valid — no retrain.
+CLI (unchanged behavior):
+  python add_games.py                    # the 2026-07 manual triage repair
+  python add_games.py --reimpute-tail K  # re-impute the last K appended rows
 
-Run from project root. Idempotent: re-running skips names already in the index.
+Run from project root.
 """
 
 import json
@@ -47,35 +50,19 @@ LIST_COLS = ["platforms", "cover_url", "developers", "publishers",
              "language_supports", "genres", "keywords"]
 MAX_PLAUSIBLE_YEAR = 2035  # keep in sync with build_combined_embeddings.py
 
-# --- Manual triage of catalog_audit.json (2026-07 session) -------------------
-# MISSING probes plus the SUSPECTs that are real gaps (namesake or corrupted
-# merge). "name" forces the stored catalog name where the merged name would
-# collide with an existing different game.
-ADD = [
-    {"query": "Super Mario Galaxy", "year": 2007},
-    {"query": "God of War II", "year": 2007},
-    {"query": "Halo 3", "year": 2007},
-    {"query": "Gears of War", "year": 2006},
-    {"query": "Portal", "year": 2007},
-    {"query": "Crysis", "year": 2007},
-    {"query": "Star Wars: Knights of the Old Republic", "year": 2003},
-    {"query": "Transistor", "year": 2014},
-    {"query": "The Walking Dead", "year": 2012},
-    {"query": "God of War", "year": 2018, "name": "God of War (2018)"},
-    {"query": "Mass Effect", "year": 2007},
-    {"query": "Metal Gear Solid", "year": 1998},
-    {"query": "Resident Evil 2", "year": 2019, "name": "Resident Evil 2 (2019)"},
-    {"query": "Bastion", "year": 2011},
-    {"query": "Call of Duty: Modern Warfare 2", "year": 2009},
-    {"query": "It Takes Two", "year": 2021, "name": "It Takes Two (2021)"},
-]
-# SUSPECTs that are probe-year artifacts (early-access years etc.), not damage.
-# Their rows are correct; nothing to do. Kept here for the record.
-SKIP_SUSPECTS = {"Mario Kart 8 Deluxe", "RimWorld", "Minecraft", "Stardew Valley",
-                 "Slay the Spire", "Baldur's Gate 3", "Life is Strange"}
-# Rows too ambiguous to refresh safely: the single 'DOOM' row is claimed by both
-# the 1993 and 2016 probes and carries no year — leave it untouched.
-SKIP_REFRESH_NAMES = {"DOOM"}
+# Block layout of a combined-embedding row (build_combined_embeddings.py).
+_TITLE = slice(0, 768)
+_DESC = slice(768, 1536)
+_TEXT = slice(0, 1536)   # title+desc (both L2'd) — the kNN similarity space
+_TAGS = slice(1536, 1568)
+_COLLAB = slice(1568, 1576)
+# Rows below this index are referenced by mdp_dataset.npz / were present at
+# training time — they must never be rewritten (policy validity).
+N_PROTECTED = 26120
+
+
+def _l2(v):
+    return (v / max(float(np.linalg.norm(v)), 1e-12)).astype(np.float32)
 
 
 def _empty(v) -> bool:
@@ -84,6 +71,46 @@ def _empty(v) -> bool:
     if isinstance(v, str):
         return v.strip() in ("", "[]", "nan")
     return False
+
+
+class Catalog:
+    """In-memory handle on every artifact the repair path touches."""
+
+    def __init__(self):
+        self.idx = pd.read_pickle(DATA / "game_embeddings_index.pkl")
+        self.E = np.load(DATA / "game_embeddings_matrix.npy")
+        self.Z = np.load(DATA / "game_actions_reduced.npy")
+        with open(DATA / "embedding_scalers.pkl", "rb") as fh:
+            self.scalers = pickle.load(fh)
+        with open(DATA / "action_pca.pkl", "rb") as fh:
+            self.pca = pickle.load(fh)
+        self.games = pd.read_csv(DATA / "games.csv")
+        self.N_start = len(self.E)  # size when loaded — the save-time assert prefix
+        self.added: list[tuple[str, dict]] = []  # (final_name, merged_dict)
+
+    @property
+    def existing(self) -> set:
+        return set(self.idx["name"])
+
+
+def ensure_backups():
+    for f in ("games.csv", "game_embeddings_matrix.npy",
+              "game_embeddings_index.pkl", "game_actions_reduced.npy"):
+        bak = DATA / (f + ".bak")
+        if not bak.exists():
+            shutil.copy2(DATA / f, bak)
+
+
+def fetch_game(query: str, year: int, sleep: float = 1.0) -> dict | None:
+    """Year-anchored live merge + validation. None when the fetch can't be
+    trusted (no description, or the resolved release contradicts the year)."""
+    d = live_enrich(query, anchor_year=year)
+    if sleep:
+        time.sleep(sleep)
+    ry = _year(d["release"])
+    if not d["description"] or ry is None or abs(ry - year) > 1:
+        return None
+    return d
 
 
 def refresh_row(games: pd.DataFrame, i: int, d: dict) -> list[str]:
@@ -105,165 +132,116 @@ def refresh_row(games: pd.DataFrame, i: int, d: dict) -> list[str]:
     return filled
 
 
-def main():
-    audit = json.loads((DATA / "catalog_audit.json").read_text())
+def append_games(cat: Catalog, specs: list[dict], verbose: bool = True) -> list[str]:
+    """Append validated new games to games.csv + E/index/Z (in memory).
 
-    idx = pd.read_pickle(DATA / "game_embeddings_index.pkl")
-    E = np.load(DATA / "game_embeddings_matrix.npy")
-    Z = np.load(DATA / "game_actions_reduced.npy")
-    with open(DATA / "embedding_scalers.pkl", "rb") as fh:
-        scalers = pickle.load(fh)
-    with open(DATA / "action_pca.pkl", "rb") as fh:
-        pca = pickle.load(fh)
-    games = pd.read_csv(DATA / "games.csv")
-    existing = set(idx["name"])
-    N_old = len(E)
+    Each spec: {"query": str, "year": int, "name": optional forced final name,
+    "merged": optional pre-fetched live_enrich dict}. Name collisions get a
+    " (YYYY)" suffix; unresolvable ones are skipped. Call save_catalog() after.
+    """
+    from sentence_transformers import SentenceTransformer
+    import torch
 
-    # One-time backups.
-    for f in ("games.csv", "game_embeddings_matrix.npy",
-              "game_embeddings_index.pkl", "game_actions_reduced.npy"):
-        bak = DATA / (f + ".bak")
-        if not bak.exists():
-            shutil.copy2(DATA / f, bak)
-    print(f"backups in place; catalog N = {N_old}")
+    model = None  # lazy — only load SBERT if something validates
+    existing = cat.existing
+    added_names = []
+    new_E, new_idx_rows = [], []
+    N_base = len(cat.E)
 
-    # ---------------- PHASE 1: refresh sparse/hidden rows ----------------
-    refreshes, seen = [], set()
-    for e in audit:
-        if e["class"] in ("SPARSE", "HIDDEN") and e["matched_name"] not in seen \
-                and e["matched_name"] not in SKIP_REFRESH_NAMES:
-            seen.add(e["matched_name"])
-            refreshes.append((e["matched_name"], e["year"]))
-
-    print(f"\n=== PHASE 1: refreshing {len(refreshes)} rows ===")
-    for name, year in refreshes:
-        d = live_enrich(name, anchor_year=year)
-        time.sleep(1)
-        rows = games.index[games["name"] == name]
-        if len(rows) == 0:
-            print(f"  !! {name!r}: not in games.csv, skipped")
-            continue
-        filled = refresh_row(games, rows[0], d)
-        print(f"  {name!r}: filled {filled if filled else 'nothing (row already full or fetch empty)'}")
-
-    # ---------------- PHASE 2: add missing games ----------------
-    print(f"\n=== PHASE 2: adding {len(ADD)} games ===")
-    added = []  # (final_name, merged_dict)
-    for spec in ADD:
+    for spec in specs:
         final_hint = spec.get("name") or spec["query"]
         if final_hint in existing:
-            print(f"  == {final_hint!r} already in index, skipped (idempotent rerun)")
+            if verbose:
+                print(f"  == {final_hint!r} already in index, skipped")
             continue
-        d = live_enrich(spec["query"], anchor_year=spec["year"])
-        time.sleep(1)
-        ry = _year(d["release"])
-        if not d["description"] or ry is None or abs(ry - spec["year"]) > 1:
-            print(f"  !! {spec['query']!r} ({spec['year']}): fetch failed validation "
-                  f"(desc={'Y' if d['description'] else 'n'}, release={d['release']!r}), skipped")
+        d = spec.get("merged") or fetch_game(spec["query"], spec["year"])
+        if d is None:
+            if verbose:
+                print(f"  !! {spec['query']!r} ({spec['year']}): fetch failed validation, skipped")
             continue
         final = spec.get("name") or d["name"] or spec["query"]
         if final in existing:
             final = f"{final} ({spec['year']})"
             if final in existing:
-                print(f"  !! {spec['query']!r}: name collision unresolvable, skipped")
+                if verbose:
+                    print(f"  !! {spec['query']!r}: name collision unresolvable, skipped")
                 continue
-        row = {c: "" for c in games.columns}
-        row.update({
-            "real_name": spec["query"], "name": final, "release": d["release"],
-            "description": d["description"] or "",
-        })
+
+        # games.csv row (exact column order; lists stored as str(list)).
+        row = {c: "" for c in cat.games.columns}
+        row.update({"real_name": spec["query"], "name": final,
+                    "release": d["release"], "description": d["description"] or ""})
         for col in SCALAR_COLS:
             row[col] = float(d.get(col) or 0.0)
         for col in LIST_COLS:
             row[col] = str(d.get(col) or [])
-        games.loc[len(games)] = row
+        cat.games.loc[len(cat.games)] = row
+
+        # Embedding row with frozen transforms (tags/collab start as the global
+        # block means; reimpute_tail upgrades them to kNN right after saving).
+        if model is None:
+            model = SentenceTransformer("all-mpnet-base-v2",
+                                        device="cuda" if torch.cuda.is_available() else "cpu")
+        bm = cat.scalers["block_means"]
+        sp = cat.scalers["scalars"]
+        title_vec = _l2(model.encode(final))
+        desc_vec = _l2(model.encode(d["description"]))
+        scal = np.zeros(len(SCALAR_COLS), dtype=np.float32)
+        for j, col in enumerate(SCALAR_COLS):
+            p = sp[col]
+            v = float(d.get(col) or 0.0)
+            if v <= 0:
+                v = p["median"]
+            if col in TTB_COLS and p.get("p99"):
+                v = min(v, p["p99"])
+            x = (v - p["min"]) / (p["max"] - p["min"]) if p["max"] > p["min"] else 0.0
+            scal[j] = min(max(x, 0.0), 1.0)
+        scal /= np.sqrt(len(SCALAR_COLS))
+        new_E.append(np.concatenate([title_vec, desc_vec, _l2(bm["tags"]), _l2(bm["collab"]), scal]))
+
+        ry = _year(d["release"])
+        new_idx_rows.append({
+            "name": final, "row_idx": N_base + len(added_names),
+            "release_year": float(ry) if (ry and ry <= MAX_PLAUSIBLE_YEAR) else np.nan,
+            "platforms": list(d.get("platforms") or []),
+            "language_supports": list(d.get("language_supports") or []),
+            "main_story": float(d.get("main_story") or 0.0),
+            "main_extra": float(d.get("main_extra") or 0.0),
+            "completionist": float(d.get("completionist") or 0.0),
+        })
         existing.add(final)
-        added.append((final, d))
-        print(f"  ++ {final!r} (release={d['release'][:10]}, "
-              f"user={d['user_rating']:.2f}, critic={d['metacritic_rating']:.2f})")
+        added_names.append(final)
+        cat.added.append((final, d))
+        if verbose:
+            print(f"  ++ {final!r} (release={d['release'][:10]}, "
+                  f"user={d['user_rating']:.2f}, critic={d['metacritic_rating']:.2f})")
 
-    # ---------------- PHASE 3: append artifacts for added games ----------------
-    if added:
-        print(f"\n=== PHASE 3: appending {len(added)} rows to E / index / Z ===")
-        from sentence_transformers import SentenceTransformer
-        import torch
-
-        model = SentenceTransformer("all-mpnet-base-v2",
-                                    device="cuda" if torch.cuda.is_available() else "cpu")
-
-        def l2(v):
-            return (v / max(float(np.linalg.norm(v)), 1e-12)).astype(np.float32)
-
-        bm = scalers["block_means"]
-        tags_vec = l2(bm["tags"])
-        collab_vec = l2(bm["collab"])
-        sp = scalers["scalars"]
-
-        new_E, new_idx_rows = [], []
-        for k, (final, d) in enumerate(added):
-            title_vec = l2(model.encode(final))
-            desc_vec = l2(model.encode(d["description"]))
-            scal = np.zeros(len(SCALAR_COLS), dtype=np.float32)
-            for j, col in enumerate(SCALAR_COLS):
-                p = sp[col]
-                v = float(d.get(col) or 0.0)
-                if v <= 0:
-                    v = p["median"]
-                if col in TTB_COLS and p.get("p99"):
-                    v = min(v, p["p99"])
-                x = (v - p["min"]) / (p["max"] - p["min"]) if p["max"] > p["min"] else 0.0
-                scal[j] = min(max(x, 0.0), 1.0)
-            scal /= np.sqrt(len(SCALAR_COLS))
-            new_E.append(np.concatenate([title_vec, desc_vec, tags_vec, collab_vec, scal]))
-
-            ry = _year(d["release"])
-            new_idx_rows.append({
-                "name": final, "row_idx": N_old + k,
-                "release_year": float(ry) if (ry and ry <= MAX_PLAUSIBLE_YEAR) else np.nan,
-                "platforms": list(d.get("platforms") or []),
-                "language_supports": list(d.get("language_supports") or []),
-                "main_story": float(d.get("main_story") or 0.0),
-                "main_extra": float(d.get("main_extra") or 0.0),
-                "completionist": float(d.get("completionist") or 0.0),
-            })
-
-        new_E = np.asarray(new_E, dtype=np.float32)
-        E_out = np.vstack([E, new_E])
-        Z_out = np.vstack([Z, pca.transform(new_E).astype(Z.dtype)])
-        idx_out = pd.concat([idx, pd.DataFrame(new_idx_rows)], ignore_index=True)
-
-        # Policy-validity proof: the pre-existing rows must be byte-identical.
-        assert np.array_equal(E_out[:N_old], E), "E prefix changed — aborting"
-        assert np.array_equal(Z_out[:N_old], Z), "Z prefix changed — aborting"
-        assert list(idx_out["name"][:N_old]) == list(idx["name"]), "index prefix changed — aborting"
-
-        np.save(DATA / "game_embeddings_matrix.npy", E_out)
-        np.save(DATA / "game_actions_reduced.npy", Z_out)
-        idx_out.to_pickle(DATA / "game_embeddings_index.pkl")
-        print(f"  E: {E.shape} -> {E_out.shape} | Z: {Z.shape} -> {Z_out.shape} (prefixes byte-identical)")
-
-        # Sanity: cosine top-5 neighbors of each added game (human eyeball gate).
-        En = E_out / np.maximum(np.linalg.norm(E_out, axis=1, keepdims=True), 1e-12)
-        names_all = idx_out["name"].tolist()
-        print("\n=== sanity: cosine top-5 per added game ===")
-        for k, (final, _) in enumerate(added):
-            sims = En @ En[N_old + k]
-            top = [names_all[i] for i in np.argsort(-sims)[1:6]]
-            print(f"  {final!r}: {top}")
-
-    games.to_csv(DATA / "games.csv", index=False)
-    print(f"\ngames.csv written ({len(games)} rows). Done.")
+    if new_E:
+        arr = np.asarray(new_E, dtype=np.float32)
+        cat.E = np.vstack([cat.E, arr])
+        cat.Z = np.vstack([cat.Z, cat.pca.transform(arr).astype(cat.Z.dtype)])
+        cat.idx = pd.concat([cat.idx, pd.DataFrame(new_idx_rows)], ignore_index=True)
+    return added_names
 
 
-# Block layout of a combined-embedding row (build_combined_embeddings.py).
-_TITLE = slice(0, 768)
-_DESC = slice(768, 1536)
-_TEXT = slice(0, 1536)   # title+desc (both L2'd) — the kNN similarity space
-_TAGS = slice(1536, 1568)
-_COLLAB = slice(1568, 1576)
-# Rows below this index are referenced by mdp_dataset.npz / were present at
-# training time — they must never be rewritten (policy validity).
-N_PROTECTED = 26120
+def save_catalog(cat: Catalog, reimpute: bool = True):
+    """Persist all artifacts. The protected prefix (everything loaded at start,
+    which always includes all training rows) must be byte-identical."""
+    ensure_backups()
+    E_old = np.load(DATA / "game_embeddings_matrix.npy", mmap_mode="r")
+    assert np.array_equal(cat.E[:cat.N_start], E_old), "E prefix changed — aborting"
+    assert cat.N_start >= N_PROTECTED, "loaded catalog smaller than the protected set"
+
+    np.save(DATA / "game_embeddings_matrix.npy", cat.E)
+    np.save(DATA / "game_actions_reduced.npy", cat.Z)
+    cat.idx.to_pickle(DATA / "game_embeddings_index.pkl")
+    cat.games.to_csv(DATA / "games.csv", index=False)
+    n_added = len(cat.E) - cat.N_start
+    print(f"saved: E {E_old.shape} -> {cat.E.shape}, games.csv {len(cat.games)} rows "
+          f"(prefix byte-identical)")
+    if reimpute and n_added > 0:
+        print(f"\n=== kNN re-imputation of the {n_added} appended rows ===")
+        reimpute_tail(n_added)
 
 
 def reimpute_tail(k_tail: int, knn: int = 10):
@@ -287,11 +265,8 @@ def reimpute_tail(k_tail: int, knn: int = 10):
     start = len(E) - k_tail
     assert start >= N_PROTECTED, f"refusing: tail reaches into protected rows (<{N_PROTECTED})"
 
-    def l2(v):
-        return (v / max(float(np.linalg.norm(v)), 1e-12)).astype(np.float32)
-
-    imput_tags = l2(scalers["block_means"]["tags"])
-    imput_collab = l2(scalers["block_means"]["collab"])
+    imput_tags = _l2(scalers["block_means"]["tags"])
+    imput_collab = _l2(scalers["block_means"]["collab"])
     ref = E[:start]
     ref_text = ref[:, _TEXT]
     real_tags = ~np.all(np.isclose(ref[:, _TAGS], imput_tags, atol=1e-6), axis=1)
@@ -305,9 +280,9 @@ def reimpute_tail(k_tail: int, knn: int = 10):
         nb_tags = [i for i in order if real_tags[i]][:knn]
         nb_collab = [i for i in order if real_collab[i]][:knn]
         if nb_tags:
-            E_new[r, _TAGS] = l2(ref[nb_tags, _TAGS].mean(axis=0))
+            E_new[r, _TAGS] = _l2(ref[nb_tags, _TAGS].mean(axis=0))
         if nb_collab:
-            E_new[r, _COLLAB] = l2(ref[nb_collab, _COLLAB].mean(axis=0))
+            E_new[r, _COLLAB] = _l2(ref[nb_collab, _COLLAB].mean(axis=0))
         print(f"  {names[r]!r}: tags<-{[names[i] for i in nb_tags[:4]]}")
 
     assert np.array_equal(E_new[:start], E[:start]), "protected rows changed — aborting"
@@ -323,6 +298,62 @@ def reimpute_tail(k_tail: int, knn: int = 10):
         sims = En @ En[r]
         top = [names[i] for i in np.argsort(-sims) if i != r][:5]
         print(f"  {names[r]!r}: {top}")
+
+
+# --- CLI: the 2026-07 manual triage repair (kept for the record / reruns) ----
+ADD = [
+    {"query": "Super Mario Galaxy", "year": 2007},
+    {"query": "God of War II", "year": 2007},
+    {"query": "Halo 3", "year": 2007},
+    {"query": "Gears of War", "year": 2006},
+    {"query": "Portal", "year": 2007},
+    {"query": "Crysis", "year": 2007},
+    {"query": "Star Wars: Knights of the Old Republic", "year": 2003},
+    {"query": "Transistor", "year": 2014},
+    {"query": "The Walking Dead", "year": 2012},
+    {"query": "God of War", "year": 2018, "name": "God of War (2018)"},
+    {"query": "Mass Effect", "year": 2007},
+    {"query": "Metal Gear Solid", "year": 1998},
+    {"query": "Resident Evil 2", "year": 2019, "name": "Resident Evil 2 (2019)"},
+    {"query": "Bastion", "year": 2011},
+    {"query": "Call of Duty: Modern Warfare 2", "year": 2009},
+    {"query": "It Takes Two", "year": 2021, "name": "It Takes Two (2021)"},
+]
+# SUSPECTs that are probe-year artifacts (early-access years etc.), not damage.
+SKIP_SUSPECTS = {"Mario Kart 8 Deluxe", "RimWorld", "Minecraft", "Stardew Valley",
+                 "Slay the Spire", "Baldur's Gate 3", "Life is Strange"}
+# Rows too ambiguous to refresh safely: the single 'DOOM' row is claimed by both
+# the 1993 and 2016 probes and carries no year — leave it untouched.
+SKIP_REFRESH_NAMES = {"DOOM"}
+
+
+def main():
+    audit = json.loads((DATA / "catalog_audit.json").read_text())
+    cat = Catalog()
+    ensure_backups()
+    print(f"catalog N = {cat.N_start}")
+
+    refreshes, seen = [], set()
+    for e in audit:
+        if e["class"] in ("SPARSE", "HIDDEN") and e["matched_name"] not in seen \
+                and e["matched_name"] not in SKIP_REFRESH_NAMES:
+            seen.add(e["matched_name"])
+            refreshes.append((e["matched_name"], e["year"]))
+
+    print(f"\n=== PHASE 1: refreshing {len(refreshes)} rows ===")
+    for name, year in refreshes:
+        d = live_enrich(name, anchor_year=year)
+        time.sleep(1)
+        rows = cat.games.index[cat.games["name"] == name]
+        if len(rows) == 0:
+            print(f"  !! {name!r}: not in games.csv, skipped")
+            continue
+        filled = refresh_row(cat.games, rows[0], d)
+        print(f"  {name!r}: filled {filled if filled else 'nothing'}")
+
+    print(f"\n=== PHASE 2+3: adding up to {len(ADD)} games ===")
+    append_games(cat, ADD)
+    save_catalog(cat)
 
 
 if __name__ == "__main__":

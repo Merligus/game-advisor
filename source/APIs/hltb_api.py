@@ -14,8 +14,16 @@ class HLTB:
         """
         Searches for games by name on HowLongToBeat.
         Returns a list of HLTBType objects sorted by similarity.
+
+        Requires howlongtobeatpy >= 1.0.22: 1.0.19 silently returned zero
+        results against the current HLTB site (every ttb/score came back 0.0).
+        HLTB has no stable public API, so treat empty results as degradation,
+        never as an error — this method must not raise.
         """
-        results_list = self.client.search(game_name)
+        try:
+            results_list = self.client.search(game_name)
+        except Exception:
+            return []
 
         if not results_list or len(results_list) == 0:
             return []

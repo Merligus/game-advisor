@@ -2,7 +2,7 @@ pandas==2.3.3
 ipykernel==7.1.0
 requests==2.32.5
 python-dotenv==1.2.1
-howlongtobeatpy==1.0.19
+howlongtobeatpy==1.0.22  # 1.0.19 silently returns 0 results vs current HLTB site
 rawg==1.2.0
 thefuzz==0.22.1
 scikit-learn==1.8.0
