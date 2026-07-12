@@ -113,8 +113,15 @@ def fetch_game(query: str, year: int, sleep: float = 1.0) -> dict | None:
     return d
 
 
-def refresh_row(games: pd.DataFrame, i: int, d: dict) -> list[str]:
-    """Fill only empty/zero fields of games.csv row i from the live merge d."""
+def refresh_row(games: pd.DataFrame, i: int, d: dict, improve_description: bool = False) -> list[str]:
+    """Fill only empty/zero fields of games.csv row i from the live merge d.
+
+    improve_description: additionally REPLACE a stub description when the
+    fetched one is substantially longer (>=1.5x and >300 chars) — thin launch
+    descriptions are the main reason a new game's text embedding carries no
+    signal, and sources enrich them over time. Used by --add refreshes and the
+    re-embed path; the default fill-only behavior never overwrites.
+    """
     filled = []
     for col in SCALAR_COLS:
         cur = games.at[i, col]
@@ -129,6 +136,12 @@ def refresh_row(games: pd.DataFrame, i: int, d: dict) -> list[str]:
         if _empty(games.at[i, col]) and d.get(col):
             games.at[i, col] = str(d[col])
             filled.append(col)
+    if improve_description and d.get("description"):
+        old = "" if _empty(games.at[i, "description"]) else str(games.at[i, "description"])
+        new = str(d["description"])
+        if len(new) > max(1.5 * len(old), 300) and "description" not in filled:
+            games.at[i, "description"] = new
+            filled.append("description(improved)")
     return filled
 
 
@@ -300,6 +313,63 @@ def reimpute_tail(k_tail: int, knn: int = 10):
         print(f"  {names[r]!r}: {top}")
 
 
+def reembed_tail(k_tail: int):
+    """Rebuild the last `k_tail` appended rows' embeddings from the CURRENT
+    games.csv text and scalars, then re-run the kNN tags/collab imputation.
+
+    Embedding rows are built once at append time and never change when a later
+    refresh improves games.csv — so a game appended with a 200-char launch stub
+    keeps a near-signal-less text embedding forever. This closes that gap:
+    title/description re-encoded with SBERT, scalars re-derived through the
+    frozen scaler params, Z recomputed via the frozen PCA. Only appended
+    (non-protected) rows are touched; training rows stay byte-identical.
+    """
+    from sentence_transformers import SentenceTransformer
+    import torch
+
+    E = np.load(DATA / "game_embeddings_matrix.npy")
+    idx = pd.read_pickle(DATA / "game_embeddings_index.pkl")
+    with open(DATA / "embedding_scalers.pkl", "rb") as fh:
+        scalers = pickle.load(fh)
+    games = pd.read_csv(DATA / "games.csv").drop_duplicates(subset=["name"]).set_index("name")
+
+    start = len(E) - k_tail
+    assert start >= N_PROTECTED, f"refusing: tail reaches into protected rows (<{N_PROTECTED})"
+
+    model = SentenceTransformer("all-mpnet-base-v2",
+                                device="cuda" if torch.cuda.is_available() else "cpu")
+    sp = scalers["scalars"]
+    names = idx["name"].tolist()
+    E_new = E.copy()
+    for r in range(start, len(E)):
+        name = names[r]
+        if name not in games.index:
+            print(f"  !! {name!r} not in games.csv, left as-is")
+            continue
+        row = games.loc[name]
+        desc = "" if _empty(row.get("description")) else str(row["description"])
+        E_new[r, _TITLE] = _l2(model.encode(name))
+        if desc:
+            E_new[r, _DESC] = _l2(model.encode(desc))
+        scal = np.zeros(len(SCALAR_COLS), dtype=np.float32)
+        for j, col in enumerate(SCALAR_COLS):
+            p = sp[col]
+            v = float(pd.to_numeric(pd.Series([row.get(col)]), errors="coerce").fillna(0).iloc[0])
+            if v <= 0:
+                v = p["median"]
+            if col in TTB_COLS and p.get("p99"):
+                v = min(v, p["p99"])
+            x = (v - p["min"]) / (p["max"] - p["min"]) if p["max"] > p["min"] else 0.0
+            scal[j] = min(max(x, 0.0), 1.0)
+        E_new[r, 1576:1584] = scal / np.sqrt(len(SCALAR_COLS))
+        print(f"  re-embedded {name!r} (desc {len(desc)}ch)")
+
+    assert np.array_equal(E_new[:start], E[:start]), "protected rows changed — aborting"
+    np.save(DATA / "game_embeddings_matrix.npy", E_new)
+    # kNN imputation + Z recompute + neighbor sanity for the same tail.
+    reimpute_tail(k_tail)
+
+
 # --- CLI: the 2026-07 manual triage repair (kept for the record / reruns) ----
 ADD = [
     {"query": "Super Mario Galaxy", "year": 2007},
@@ -359,5 +429,7 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--reimpute-tail":
         reimpute_tail(int(sys.argv[2]))
+    elif len(sys.argv) > 2 and sys.argv[1] == "--reembed-tail":
+        reembed_tail(int(sys.argv[2]))
     else:
         main()

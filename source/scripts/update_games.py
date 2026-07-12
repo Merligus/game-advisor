@@ -128,14 +128,16 @@ def refresh_pass(cat: Catalog, state: dict, budget: int) -> int:
 
 
 def _catalog_matcher(cat: Catalog):
-    """Fuzzy matcher: is this (title, year) already in the catalog? Reuses the
-    hardened normalize/sequel-number logic and the audit's thresholds."""
+    """Fuzzy matcher against the catalog, reusing the hardened normalize /
+    sequel-number logic and the audit's thresholds. Returns the matched catalog
+    name (truthy) or None — callers that only need existence use truthiness;
+    the --add path uses the name to refresh + pin the hidden row."""
     names = cat.idx["name"].tolist()
     years = cat.idx["release_year"].tolist()
     norm = [_normalize(n) for n in names]
     nums = [_numbers(n) for n in names]
 
-    def known(title: str, year: int | None) -> bool:
+    def known(title: str, year: int | None) -> str | None:
         tn, tnum = _normalize(title), _numbers(title)
         for i, n in enumerate(norm):
             if nums[i] != tnum:
@@ -145,8 +147,8 @@ def _catalog_matcher(cat: Catalog):
             cy = years[i]
             if year is None or cy is None or (isinstance(cy, float) and np.isnan(cy)) \
                     or abs(int(cy) - year) <= YEAR_TOL:
-                return True
-        return False
+                return names[i]
+        return None
 
     return known
 
@@ -227,14 +229,27 @@ def main():
 
     specs = discovery_pass(cat, state, args.discover, args.window_days, args.min_added)
     known = _catalog_matcher(cat) if args.add else None
+    pinned_existing = []
     for entry in args.add:
         title, _, year = entry.rpartition(":")
         if not title or not year.strip().isdigit():
             print(f"  !! --add {entry!r}: expected 'Title:YYYY', skipped")
             continue
         title, y = title.strip(), int(year)
-        if known(title, y):
-            print(f"  == --add {title!r} ({y}): already in the catalog (fuzzy+year match), skipped")
+        match = known(title, y)
+        if match:
+            # The user explicitly asked for this game: it exists but may be
+            # hidden (sparse metadata below the preload cutoff). Refresh its
+            # row — allowing a substantially longer description to replace a
+            # stub — and pin it so it becomes searchable in the dropdown.
+            print(f"  == --add {title!r} ({y}): already in catalog as {match!r} — refreshing + pinning")
+            d = live_enrich(match, anchor_year=y)
+            time.sleep(1)
+            rows = cat.games.index[cat.games["name"] == match]
+            if len(rows):
+                filled = refresh_row(cat.games, rows[0], d, improve_description=True)
+                print(f"     filled {filled if filled else 'nothing'}")
+            pinned_existing.append(match)
             continue
         specs.append({"query": title, "year": y})
 
@@ -243,14 +258,16 @@ def main():
         print(f"\n=== ADD pass ({len(specs)} candidates) ===")
         added = append_games(cat, specs)
 
-    if n_refreshed or added:
+    changed = bool(n_refreshed or added or pinned_existing)
+    if changed:
         save_catalog(cat)  # asserts protected prefix; auto kNN-reimputes adds
-        if added:
-            update_updater_pins(added)
+        if added or pinned_existing:
+            update_updater_pins(added + pinned_existing)
     save_state(state)
 
-    print(f"\n=== summary: {n_refreshed} refreshed, {len(added)} added ===")
-    if n_refreshed or added:
+    print(f"\n=== summary: {n_refreshed} refreshed, {len(added)} added, "
+          f"{len(pinned_existing)} existing pinned ===")
+    if changed:
         if args.deploy:
             print("deploying to the Space...")
             deploy()
