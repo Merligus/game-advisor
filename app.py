@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "source"))
 import gradio as gr
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw
+from thefuzz import fuzz
 
 from recommender import artifacts
 from recommender.inference import recommend
@@ -30,23 +31,28 @@ load_dotenv()
 
 # --- Catalog-derived UI choices -----------------------------------------------
 _idx = artifacts.index_frame()
+ALL_NAMES = sorted(_idx["name"].tolist())
 PLATFORMS = [p for p, _ in Counter(p for lst in _idx["platforms"] for p in lst).most_common(20)]
 ANY_LANG = "(any)"
 LANGUAGES = [ANY_LANG] + [l for l, _ in Counter(l for lst in _idx["language_supports"] for l in lst).most_common()]
 YEAR_MIN, YEAR_MAX = 1975, 2026
 
-# Play-history dropdown choices are preloaded once at startup instead of being
-# fetched per keystroke. The old design (key_up -> server fuzzy search -> choices
-# update) depended on a queue/SSE round-trip for every key press, and on HF
-# Spaces that path silently dropped typing events twice (no suggestions in the
-# browser while the same event POSTed straight to /gradio_api worked). Native
-# client-side filtering over preloaded choices has no server dependency at all.
-# Preloading the FULL ~26k catalog is what made v1 laggy (Gradio renders every
-# option in the DOM — no virtualization), so we preload the N games with the
-# best source coverage: how many of the five collection APIs knew the game,
-# tie-broken by user/critic score — a strong fame proxy already in games.csv.
-# The long tail stays reachable by typing a full title + Enter
-# (allow_custom_value; state_builder fuzzy-resolves it at recommend time).
+# Play-history dropdown search is HYBRID: choices are preloaded once at startup
+# (instant, zero server dependency) AND a key_up handler swaps them for
+# full-catalog search results as the user types. Preloading the FULL ~26k
+# catalog is not an option — Gradio renders every filtered option in the DOM
+# (no virtualization, verified against 6.15's compiled Dropdown JS), which is
+# what made v1 laggy — so the preload is the N games with the best source
+# coverage (how many of the five collection APIs knew the game), tie-broken by
+# user/critic score, a strong fame proxy already in games.csv. That cutoff hid
+# whole famous franchises (Fable, FIFA) whose rows are real but sparse, hence
+# the server-search layer: it makes every cataloged title findable. Server
+# key_up proved flaky on HF Spaces twice before (events silently dropped; the
+# first time was SSR, fixed by ssr_mode=False, the second unexplained) — the
+# hybrid is deliberately drop-safe: a lost keystroke event just leaves the
+# client-filtered preload list, which is the complete pre-hybrid behavior.
+# Last resort stays too: type a full title + Enter (allow_custom_value;
+# state_builder fuzzy-resolves it at recommend time).
 N_PRELOAD = 3000
 
 
@@ -278,6 +284,51 @@ def _cover_html(r):
     return '<div style="height:160px;display:flex;align-items:center;justify-content:center;' 'color:#888;border:1px dashed var(--border-color-primary);border-radius:8px;">no cover art</div>'
 
 
+# Top fuzzy matches fed into the dropdown while typing. Kept small on purpose:
+# the popup shows a handful of rows and navigation is nicer over a short,
+# high-precision list — typing one more letter narrows better than arrowing
+# through dozens.
+SEARCH_LIMIT = 20
+
+
+# Keys that navigate/commit within the open dropdown rather than change the
+# query text. key_up fires on ALL keys, and re-emitting `choices` on these
+# re-renders the list and snaps the highlight back to the top — so pressing the
+# arrows to pick a match felt like the list kept resetting. We skip re-filtering
+# for these and leave the dropdown untouched (gr.skip()).
+_NAV_KEYS = {
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape", "Tab",
+    "Home", "End", "PageUp", "PageDown", "Shift", "Control", "Alt", "Meta", "CapsLock",
+}
+
+
+def search_games(selected, evt: gr.KeyUpData):
+    """Full-catalog autocomplete layered over the preloaded dropdown (see the
+    N_PRELOAD comment for the hybrid rationale).
+
+    Reads the typed text from the key_up event, builds a cheap candidate pool
+    over ALL ~26k titles (substring, falling back to all-tokens-present), then
+    ranks it with thefuzz `WRatio` so the closest titles surface first
+    ("witcher" -> "The Witcher 3: Wild Hunt"). Already-selected games are kept
+    in the choices so their chips stay valid. Clearing the text restores the
+    preload list (the old design returned a near-empty list there, which read
+    as the catalog vanishing)."""
+    # Don't re-filter (and reset the highlight) on arrow/enter/etc. navigation.
+    if evt.key in _NAV_KEYS:
+        return gr.skip()
+    selected = list(selected or [])
+    q = (evt.input_value or "").strip().lower()
+    if len(q) < 2:
+        return gr.update(choices=list(dict.fromkeys(selected + PRELOAD_NAMES)))
+    pool = [n for n in ALL_NAMES if q in n.lower()]
+    if len(pool) < 5:  # no/few substring hits -> try all-tokens-present
+        toks = q.split()
+        pool = list(dict.fromkeys(pool + [n for n in ALL_NAMES if all(t in n.lower() for t in toks)]))
+    pool = pool[:3000]  # bound the fuzzy pass for pathological short queries
+    matches = sorted(pool, key=lambda n: fuzz.WRatio(q, n.lower()), reverse=True)[:SEARCH_LIMIT]
+    return gr.update(choices=list(dict.fromkeys(selected + matches)))
+
+
 def _generate(played_inputs, year_min, year_max, platforms, language, mode_label, top_n, candidate_k, enrich_live):
     if year_max < year_min:
         year_min, year_max = year_max, year_min
@@ -349,9 +400,9 @@ def toggle_played(played, name, current_label):
         played.append(name)
         label = _REMOVE_LABEL
     main = "Refine" if played else "Recommend"
-    # Update ONLY the value — the choices are the preloaded searchable catalog
-    # (PRELOAD_NAMES + pins) and must never be overwritten, or the search list
-    # goes blank after the first toggle. Games not in the preload (e.g. a
+    # Update ONLY the value — choices belong to the search layer (preload at
+    # rest, search_games results while typing); overwriting them here blanked
+    # the search list after the first toggle. Games not in the choices (e.g. a
     # recommended long-tail title) stay valid as chips via allow_custom_value.
     return gr.update(value=played), gr.update(value=label), gr.update(value=main)
 
@@ -359,19 +410,21 @@ def toggle_played(played, name, current_label):
 with gr.Blocks(title="Game Advisor") as demo:
     gr.Markdown("# 🎮 Game Advisor\n" "Offline-RL game recommender. Type games you've enjoyed into the search box and hit " "**Recommend**. Click a cover to enlarge it and see the game's details; the toggle next to " "each title adds/removes it from your history so you can refine.")
 
-    # Choices are preloaded at startup (top N_PRELOAD by source coverage — see
-    # _preload_names) and filtered natively in the browser: typing never needs a
-    # server round-trip, which repeatedly proved unreliable on HF Spaces.
-    # allow_custom_value=True keeps the long tail reachable: type the full title
-    # and press Enter — state_builder.cold_start_state fuzzy-resolves it against
-    # the whole 26k catalog at recommend time (and drops what it can't match).
+    # Hybrid search (see the N_PRELOAD comment): ships with the top-N preload
+    # filtered natively in the browser, while key_up swaps in full-catalog
+    # search results — so a dropped typing event degrades to the preload list
+    # instead of a blank one. allow_custom_value=True keeps the last resort:
+    # type the full title and press Enter — state_builder.cold_start_state
+    # fuzzy-resolves it against the whole catalog at recommend time (and drops
+    # what it can't match). It also makes the choices-swap race harmless: a
+    # selection landing after a swap can't fail Dropdown.preprocess validation.
     played_dropdown = gr.Dropdown(
         PRELOAD_NAMES,
         multiselect=True,
         filterable=True,
         allow_custom_value=True,
         label="Games you've played",
-        info="Type to filter the most popular games. Can't find yours? Type its full name and press Enter — it'll be matched to the catalog.",
+        info="Type to search the full catalog, then pick the games you've played.",
     )
 
     with gr.Accordion("Filters & ranking options", open=False):
@@ -429,6 +482,12 @@ with gr.Blocks(title="Game Advisor") as demo:
         [played_dropdown, selected_name, played_toggle],
         [played_dropdown, played_toggle, recommend_btn],
     )
+    # Full-catalog autocomplete as the user types (hybrid search layer).
+    # trigger_mode="always_last": collapse a burst of keystrokes into one
+    # search, so stale responses from earlier keys can't re-render the list
+    # (and reset the highlight) after the user has started arrow-navigating.
+    played_dropdown.key_up(search_games, [played_dropdown], [played_dropdown],
+                           show_progress="hidden", trigger_mode="always_last")
 
 
 if __name__ == "__main__":
