@@ -138,16 +138,32 @@ def _catalog_matcher(cat: Catalog):
     nums = [_numbers(n) for n in names]
 
     def known(title: str, year: int | None) -> str | None:
+        # Prefer a year-CONFIRMED match over a year-unknown one: a franchise can
+        # have both a dated row ('Fable (2004)') and an undated stub ('Fable'),
+        # and the dated one is the intended target when the query carries a year.
         tn, tnum = _normalize(title), _numbers(title)
+        best_dated, best_undated = None, None  # ((norm_ratio, raw_ratio), name)
         for i, n in enumerate(norm):
             if nums[i] != tnum:
                 continue
-            if fuzz.ratio(tn, n) / 100.0 < RATIO_MIN:
+            r = fuzz.ratio(tn, n) / 100.0
+            if r < RATIO_MIN:
                 continue
+            # Raw-string ratio breaks normalized ties: edition-stripping makes
+            # 'Fable Anniversary' and 'Fable' both normalize to "fable", and
+            # the query "Fable Anniversary" must match the former.
+            key = (r, fuzz.ratio(title.lower(), names[i].lower()) / 100.0)
             cy = years[i]
-            if year is None or cy is None or (isinstance(cy, float) and np.isnan(cy)) \
-                    or abs(int(cy) - year) <= YEAR_TOL:
-                return names[i]
+            if cy is None or (isinstance(cy, float) and np.isnan(cy)):
+                if best_undated is None or key > best_undated[0]:
+                    best_undated = (key, names[i])
+            elif year is None or abs(int(cy) - year) <= YEAR_TOL:
+                if best_dated is None or key > best_dated[0]:
+                    best_dated = (key, names[i])
+        if best_dated:
+            return best_dated[1]
+        if best_undated:
+            return best_undated[1]
         return None
 
     return known
