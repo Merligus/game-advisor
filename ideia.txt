@@ -152,6 +152,9 @@ updates:
         + mark as played das recomendações pra refinar com um botaozinho depois de clickar no card. 
         + esconder controles dificeis
     + Lower-dim action target: Fit a PCA on `E` (e.g. → 64–128d)
-    - Discrete action-ID ranking over the candidate set: Reframe as ranking: a learned scorer `Q(state, game_embedding) → scalar` over the ≤K candidates
-    - atualizar README em todo passo
+    + Discrete action-ID ranking over the candidate set: Reframe as ranking: a learned scorer `Q(state, game_embedding) → scalar` over the ≤K candidates
+    + atualizar README em todo passo
+    + atualizar game list
+    - atualizar user list
+    - atualizar algoritmo
     
